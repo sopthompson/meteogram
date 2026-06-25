@@ -95,6 +95,12 @@ async function fetchJSON(url, ttlMs, key) {
   }
   omStore(key, j); return j;
 }
+// transient error banner: shows briefly, then clears itself (data already on screen stays)
+let _errTimer = null;
+function setErr(msg) {
+  const e = document.getElementById('err'); e.textContent = msg || '';
+  clearTimeout(_errTimer); if (msg) _errTimer = setTimeout(() => { e.textContent = ''; }, 6000);
+}
 
 // ---- stats -----------------------------------------------------------------
 function quantile(s, q) { const p = (s.length - 1) * q, b = Math.floor(p), r = p - b; return s[b + 1] !== undefined ? s[b] + r * (s[b + 1] - s[b]) : s[b]; }
@@ -207,7 +213,7 @@ function draw() {
 }
 
 async function load(loc) {
-  document.getElementById('err').textContent = '';
+  setErr('');
   document.getElementById('submeta').textContent = 'loading…';
   try {
     const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&forecast_days=15`;
@@ -242,13 +248,13 @@ async function load(loc) {
     onLoaded(loc);
   } catch (e) {
     document.getElementById('submeta').textContent = '';
-    document.getElementById('err').textContent = 'Could not load forecast: ' + e.message;
+    setErr('Could not load forecast: ' + e.message);
   }
 }
 
 // Observed weather for a past date range (ERA5 reanalysis — a single line, no ensemble).
 async function loadArchive(loc, from, to) {
-  document.getElementById('err').textContent = '';
+  setErr('');
   document.getElementById('submeta').textContent = 'loading history…';
   try {
     const url = `${ARCHIVE}?latitude=${loc.lat}&longitude=${loc.lon}&start_date=${from}&end_date=${to}&hourly=${HOURLY}&wind_speed_unit=ms`;
@@ -268,7 +274,7 @@ async function loadArchive(loc, from, to) {
     draw(); onLoaded(loc);
   } catch (e) {
     document.getElementById('submeta').textContent = '';
-    document.getElementById('err').textContent = 'Could not load history: ' + e.message;
+    setErr('Could not load history: ' + e.message);
   }
 }
 
@@ -317,13 +323,13 @@ favBtn.addEventListener('click', () => {
 });
 async function search() {
   const q = qEl.value.trim(); if (!q) return;
-  document.getElementById('err').textContent = '';
+  setErr('');
   try {
     const gj = await fetchJSON(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`, Infinity, `geo:${q.toLowerCase()}`);
     const res = (gj.results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
-    if (!res.length) { document.getElementById('err').textContent = `No place found for “${q}”.`; return; }
+    if (!res.length) { setErr(`No place found for “${q}”.`); return; }
     recent = [...res, ...recent].slice(0, 12); rebuild(); load(res[0]);   // matches go in the dropdown to disambiguate
-  } catch (e) { document.getElementById('err').textContent = 'Search failed: ' + e.message; }
+  } catch (e) { setErr('Search failed: ' + e.message); }
 }
 document.getElementById('go').addEventListener('click', search);
 qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
@@ -337,8 +343,8 @@ fromEl.value = iso(new Date(maxArchive.getTime() - 6 * 86400000));
 document.getElementById('view').addEventListener('click', () => {
   const f = fromEl.value, t = toEl.value;
   if (!loaded) return;
-  if (!f || !t) { document.getElementById('err').textContent = 'Pick a From and To date.'; return; }
-  if (f > t) { document.getElementById('err').textContent = 'From date is after To date.'; return; }
+  if (!f || !t) { setErr('Pick a From and To date.'); return; }
+  if (f > t) { setErr('From date is after To date.'); return; }
   loadArchive(loaded, f, t);
 });
 document.getElementById('fc').addEventListener('click', () => { if (loaded) load(loaded); });
