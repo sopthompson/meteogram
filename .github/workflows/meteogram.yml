@@ -29,6 +29,8 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
       - name: Generate meteogram data
+        env:
+          ECMWF_SOURCE: azure   # Azure mirror — far faster bulk pulls than data.ecmwf.int
         run: python generate.py
       - name: Assemble site
         run: |
