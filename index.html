@@ -36,10 +36,11 @@
   <button id="go">Search</button>
   <label>Place <select id="loc"></select></label>
   <button id="fav" title="Save to favourites">☆ Save</button>
-  <label>History <select id="hist">
-    <option value="0">none</option>
-    <option value="3" selected>recent past</option>
-  </select></label>
+  <span style="color:#6f7f99">│ history:</span>
+  <label>from <input type="date" id="from"></label>
+  <label>to <input type="date" id="to"></label>
+  <button id="view" title="Observed weather (ERA5) for this date range">View</button>
+  <button id="fc" title="Back to live ensemble forecast">↻ Forecast</button>
 </div>
 <div class="legend">
   <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
@@ -60,6 +61,7 @@ const LOCS = [   // saved favourites; search adds any place via geocoding
   { name: 'Sheffield', lat: 53.38, lon: -1.47 },
 ];
 const GEO = 'https://geocoding-api.open-meteo.com/v1/search';
+const ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';   // ERA5 reanalysis (observed past, to 1940)
 const API = 'https://ensemble-api.open-meteo.com/v1/ensemble';
 const HOURLY = 'temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,cloud_cover,pressure_msl';
 // frontend key, Open-Meteo base field, label, unit
@@ -186,8 +188,7 @@ async function load(loc) {
   document.getElementById('err').textContent = '';
   document.getElementById('submeta').textContent = 'loading…';
   try {
-    const past = parseInt(document.getElementById('hist').value, 10) || 0;
-    const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&past_days=${past}&forecast_days=15`;
+    const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&forecast_days=15`;
     const r = await fetch(url);
     if (!r.ok) throw new Error('Open-Meteo HTTP ' + r.status);
     const j = await r.json(), h = j.hourly;
@@ -221,6 +222,33 @@ async function load(loc) {
   } catch (e) {
     document.getElementById('submeta').textContent = '';
     document.getElementById('err').textContent = 'Could not load forecast: ' + e.message;
+  }
+}
+
+// Observed weather for a past date range (ERA5 reanalysis — a single line, no ensemble).
+async function loadArchive(loc, from, to) {
+  document.getElementById('err').textContent = '';
+  document.getElementById('submeta').textContent = 'loading history…';
+  try {
+    const url = `${ARCHIVE}?latitude=${loc.lat}&longitude=${loc.lon}&start_date=${from}&end_date=${to}&hourly=${HOURLY}&wind_speed_unit=ms`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Archive HTTP ' + r.status);
+    const j = await r.json(), h = j.hourly;
+    if (!h || !h.time || !h.time.length) throw new Error('no data for that range');
+    const vars = {};
+    for (const [key, base, label, unit] of VMAP) { if (base in h) vars[key] = { label, unit, members: [h[base]], hres: null }; }  // one observed series
+    DATA = {
+      location: { name: loc.name, lat: j.latitude, lon: j.longitude },
+      model: 'ERA5 reanalysis · observed',
+      steps: h.time.map((_, i) => i), valid: h.time.map(t => t + ':00Z'), vars, nowIndex: 0,
+    };
+    document.getElementById('title').textContent = `Weather history — ${loc.name}`;
+    document.getElementById('submeta').innerHTML =
+      `<b>ERA5 reanalysis — observed</b> · ${j.latitude.toFixed(2)}°, ${j.longitude.toFixed(2)}° · ${from} → ${to}`;
+    draw(); onLoaded(loc);
+  } catch (e) {
+    document.getElementById('submeta').textContent = '';
+    document.getElementById('err').textContent = 'Could not load history: ' + e.message;
   }
 }
 
@@ -279,7 +307,21 @@ async function search() {
 }
 document.getElementById('go').addEventListener('click', search);
 qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
-document.getElementById('hist').addEventListener('change', () => { if (loaded) load(loaded); });
+// history date range: defaults to the past week, max ~2 days ago (ERA5 latency), 1940 floor
+const fromEl = document.getElementById('from'), toEl = document.getElementById('to');
+const iso = d => d.toISOString().slice(0, 10);
+const maxArchive = new Date(Date.now() - 2 * 86400000);
+fromEl.max = toEl.max = iso(maxArchive); fromEl.min = toEl.min = '1940-01-01';
+toEl.value = iso(maxArchive);
+fromEl.value = iso(new Date(maxArchive.getTime() - 6 * 86400000));
+document.getElementById('view').addEventListener('click', () => {
+  const f = fromEl.value, t = toEl.value;
+  if (!loaded) return;
+  if (!f || !t) { document.getElementById('err').textContent = 'Pick a From and To date.'; return; }
+  if (f > t) { document.getElementById('err').textContent = 'From date is after To date.'; return; }
+  loadArchive(loaded, f, t);
+});
+document.getElementById('fc').addEventListener('click', () => { if (loaded) load(loaded); });
 window.addEventListener('resize', draw);
 
 rebuild();
