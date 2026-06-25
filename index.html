@@ -32,11 +32,9 @@
   <div class="meta" id="submeta">loading…</div>
 </header>
 <div class="bar">
-  <label>Location <select id="loc"></select></label>
-  <span style="color:#6f7f99">or</span>
-  <label>lat <input id="lat" type="number" step="0.01" placeholder="53.37"></label>
-  <label>lon <input id="lon" type="number" step="0.01" placeholder="-1.50"></label>
-  <button id="go">Go</button>
+  <input id="q" type="text" placeholder="Search any town or city…">
+  <button id="go">Search</button>
+  <label>Place <select id="loc"></select></label>
 </div>
 <div class="legend">
   <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
@@ -53,9 +51,10 @@
 </footer>
 
 <script>
-const LOCS = [
-  { id: 'sheffield', name: 'Sheffield (S11 9LP)', lat: 53.365, lon: -1.50 },
+const LOCS = [   // saved favourites; search adds any place via geocoding
+  { name: 'Sheffield', lat: 53.38, lon: -1.47 },
 ];
+const GEO = 'https://geocoding-api.open-meteo.com/v1/search';
 const API = 'https://ensemble-api.open-meteo.com/v1/ensemble';
 const HOURLY = 'temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,cloud_cover,pressure_msl';
 // frontend key, Open-Meteo base field, label, unit
@@ -208,13 +207,33 @@ async function load(loc) {
   }
 }
 
-for (const l of LOCS) { const o = document.createElement('option'); o.value = l.id; o.textContent = l.name; sel.appendChild(o); }
-sel.addEventListener('change', () => { const l = LOCS.find(x => x.id === sel.value); if (l) load(l); });
-document.getElementById('go').addEventListener('click', () => {
-  const lat = parseFloat(document.getElementById('lat').value), lon = parseFloat(document.getElementById('lon').value);
-  if (!Number.isNaN(lat) && !Number.isNaN(lon)) load({ name: `${lat.toFixed(2)}, ${lon.toFixed(2)}`, lat, lon });
-});
+let current = [];
+function fillDropdown(list) {
+  current = list; sel.innerHTML = '';
+  list.forEach((l, i) => { const o = document.createElement('option'); o.value = i; o.textContent = l.name; sel.appendChild(o); });
+}
+sel.addEventListener('change', () => { const l = current[sel.value]; if (l) load(l); });
+
+const qEl = document.getElementById('q');
+async function search() {
+  const q = qEl.value.trim();
+  if (!q) return;
+  document.getElementById('err').textContent = '';
+  try {
+    const r = await fetch(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`);
+    const d = await r.json();
+    const res = (d.results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
+    if (!res.length) { document.getElementById('err').textContent = `No place found for “${q}”.`; return; }
+    fillDropdown(res); sel.value = '0'; load(res[0]);   // matches go in the dropdown so you can disambiguate
+  } catch (e) {
+    document.getElementById('err').textContent = 'Search failed: ' + e.message;
+  }
+}
+document.getElementById('go').addEventListener('click', search);
+qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+
 window.addEventListener('resize', draw);
+fillDropdown(LOCS);
 load(LOCS[0]);
 </script>
 </body>
