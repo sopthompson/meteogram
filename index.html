@@ -35,6 +35,7 @@
   <input id="q" type="text" placeholder="Search any town or city…">
   <button id="go">Search</button>
   <label>Place <select id="loc"></select></label>
+  <button id="fav" title="Save to favourites">☆ Save</button>
 </div>
 <div class="legend">
   <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
@@ -201,40 +202,73 @@ async function load(loc) {
       (j.elevation != null ? ` · ${Math.round(j.elevation)} m` : '') +
       ` · from ${new Date(DATA.valid[0]).toUTCString().replace(':00 GMT', ' UTC')} · hourly, 15-day`;
     draw();
+    onLoaded(loc);
   } catch (e) {
     document.getElementById('submeta').textContent = '';
     document.getElementById('err').textContent = 'Could not load forecast: ' + e.message;
   }
 }
 
-let current = [];
-function fillDropdown(list) {
-  current = list; sel.innerHTML = '';
-  list.forEach((l, i) => { const o = document.createElement('option'); o.value = i; o.textContent = l.name; sel.appendChild(o); });
+// favourites + last-viewed persistence (localStorage)
+const LS_FAV = 'meteogram.favs', LS_LAST = 'meteogram.last';
+const getFavs = () => { try { return JSON.parse(localStorage.getItem(LS_FAV)) || []; } catch { return []; } };
+const setFavs = f => localStorage.setItem(LS_FAV, JSON.stringify(f));
+const sameLoc = (a, b) => !!a && !!b && Math.abs(a.lat - b.lat) < 0.02 && Math.abs(a.lon - b.lon) < 0.02;
+const favBtn = document.getElementById('fav'), qEl = document.getElementById('q');
+let current = [], recent = [], loaded = null;
+
+function rebuild() {
+  sel.innerHTML = ''; current = [];
+  const favs = getFavs(), favList = favs.length ? favs : LOCS;
+  const grp = (label, items) => {
+    items = items.filter(Boolean); if (!items.length) return;
+    const og = document.createElement('optgroup'); og.label = label;
+    for (const it of items) {
+      const i = current.length; current.push(it);
+      const o = document.createElement('option'); o.value = i; o.textContent = it.name; og.appendChild(o);
+    }
+    sel.appendChild(og);
+  };
+  grp(favs.length ? '★ Favourites' : 'Default', favList);
+  grp('Recent', recent.filter(r => !favList.some(f => sameLoc(f, r))));
+  if (loaded) { const i = current.findIndex(c => sameLoc(c, loaded)); if (i >= 0) sel.value = i; }
+}
+function updateFav() {
+  const isFav = loaded && getFavs().some(f => sameLoc(f, loaded));
+  favBtn.textContent = isFav ? '★ Saved' : '☆ Save';
+  favBtn.title = isFav ? 'Remove from favourites' : 'Save to favourites';
+}
+function onLoaded(loc) {                                   // called after a successful load()
+  loaded = { name: loc.name, lat: loc.lat, lon: loc.lon };
+  localStorage.setItem(LS_LAST, JSON.stringify(loaded));
+  if (!current.some(c => sameLoc(c, loaded))) { recent = [loaded, ...recent.filter(r => !sameLoc(r, loaded))].slice(0, 8); rebuild(); }
+  else { const i = current.findIndex(c => sameLoc(c, loaded)); if (i >= 0) sel.value = i; }
+  updateFav();
 }
 sel.addEventListener('change', () => { const l = current[sel.value]; if (l) load(l); });
-
-const qEl = document.getElementById('q');
+favBtn.addEventListener('click', () => {
+  if (!loaded) return;
+  const favs = getFavs(), i = favs.findIndex(f => sameLoc(f, loaded));
+  if (i >= 0) favs.splice(i, 1); else favs.push(loaded);
+  setFavs(favs); rebuild(); updateFav();
+});
 async function search() {
-  const q = qEl.value.trim();
-  if (!q) return;
+  const q = qEl.value.trim(); if (!q) return;
   document.getElementById('err').textContent = '';
   try {
     const r = await fetch(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`);
-    const d = await r.json();
-    const res = (d.results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
+    const res = ((await r.json()).results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
     if (!res.length) { document.getElementById('err').textContent = `No place found for “${q}”.`; return; }
-    fillDropdown(res); sel.value = '0'; load(res[0]);   // matches go in the dropdown so you can disambiguate
-  } catch (e) {
-    document.getElementById('err').textContent = 'Search failed: ' + e.message;
-  }
+    recent = [...res, ...recent].slice(0, 12); rebuild(); load(res[0]);   // matches go in the dropdown to disambiguate
+  } catch (e) { document.getElementById('err').textContent = 'Search failed: ' + e.message; }
 }
 document.getElementById('go').addEventListener('click', search);
 qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
-
 window.addEventListener('resize', draw);
-fillDropdown(LOCS);
-load(LOCS[0]);
+
+rebuild();
+let lastSeen = null; try { lastSeen = JSON.parse(localStorage.getItem(LS_LAST)); } catch {}
+load(lastSeen || LOCS[0]);                                // reopen on last-viewed location
 </script>
 </body>
 </html>
