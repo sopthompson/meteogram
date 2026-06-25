@@ -37,7 +37,7 @@
 <div class="legend">
   <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
   <span><span class="sw" style="background:#ffd166;height:3px"></span>median</span>
-  <span><span class="sw" style="background:#fff;height:3px"></span>control run</span>
+  <span><span class="sw" style="background:#fff;height:3px"></span>HRES (high-res run)</span>
 </div>
 <div id="wrap"><canvas id="cv"></canvas></div>
 <div class="err" id="err"></div>
@@ -176,10 +176,10 @@ function draw() {
       ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2; ctx.beginPath();
       for (let j = 0; j < n; j++) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s.p50)); }
       ctx.stroke();
-      // control run (member 0)
-      if (vd && vd.members[0]) {
+      // HRES deterministic run (headline line)
+      if (vd && vd.hres) {
         ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.3; ctx.beginPath();
-        for (let j = 0; j < n; j++) { const v = vd.members[0][j]; if (v != null) ctx.lineTo(x(steps[j]), Y(v)); }
+        for (let j = 0; j < n; j++) { const v = vd.hres[j]; if (v != null) ctx.lineTo(x(steps[j]), Y(v)); }
         ctx.stroke();
       }
     }
