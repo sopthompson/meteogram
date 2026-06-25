@@ -1,51 +1,42 @@
 # Ensemble Meteogram
 
-A 51-member **ECMWF ensemble meteogram** for fixed locations — temperature,
-precipitation, wind (+ gust), cloud cover and pressure, with the full ensemble
-spread (min–max / 10–90 / 25–75%), median and control run, over a 15-day forecast.
+A 51-member **ECMWF ensemble meteogram** — temperature, precipitation, wind
+(+ gust), cloud cover and pressure, with the full ensemble spread
+(min–max / 10–90 / 25–75%), median and control run, hourly over 15 days, plus
+day/night shading.
 
-Currently set up for **Sheffield (S11 9LP)**.
-
-It's a single static `index.html` served from GitHub Pages; a scheduled GitHub
-Action does the heavy lifting (downloads the latest ENS run, extracts each
-location's grid point, writes the data JSON) so there's no server to run.
+Set up for **Sheffield (S11 9LP)**, with a lat/lon box for any location.
 
 ## How it works
 
-- **`generate.py`** — pulls the latest IFS ENS run from
-  [ECMWF Open Data](https://www.ecmwf.int/en/forecasts/datasets/open-data)
-  (0.25°, GRIB2) for a few surface variables, extracts the nearest grid point for
-  each location in `locations.json`, and writes `data/<id>.json`.
-- **`.github/workflows/meteogram.yml`** — runs twice daily (after the 00z and 12z
-  runs disseminate) plus on demand, then deploys `index.html` + `data/` to Pages.
-- **`index.html`** — loads the JSON and draws the meteogram in the browser
-  (canvas, no dependencies).
+It's a **single static `index.html`** — no backend, no build step, no scheduled
+jobs. The page fetches the
+[Open-Meteo Ensemble API](https://open-meteo.com/en/docs/ensemble-api) directly
+in the browser (CORS-enabled, ~0.3 s) for the **ECMWF IFS 0.25°** model, which is
+derived from [ECMWF Open Data](https://www.ecmwf.int/en/forecasts/datasets/open-data).
+Always shows the latest run; nothing to maintain.
+
+> Earlier this pulled raw GRIB from ECMWF in a GitHub Action, but a point
+> meteogram needs every member × step × variable as whole-globe fields (~10 GB),
+> which is far too slow to download in CI. Open-Meteo already serves the same
+> ECMWF ensemble as a point time series, so the browser fetches it directly.
 
 ## Add / change locations
 
-Edit `locations.json` and add the `id` to the `LOCS` array near the top of
-`index.html`'s script:
+Edit the `LOCS` array near the top of the script in `index.html`:
 
-```json
-{ "id": "york", "name": "York", "lat": 53.96, "lon": -1.08 }
+```js
+const LOCS = [
+  { id: 'sheffield', name: 'Sheffield (S11 9LP)', lat: 53.365, lon: -1.50 },
+  { id: 'york',      name: 'York',                lat: 53.96,  lon: -1.08 },
+];
 ```
 
-Coordinates anywhere in the 0.25° (~25 km) grid cell give the same forecast.
+Or just type a lat/lon into the box on the page.
 
 ## Data & licence
 
-Forecast data: ECMWF Open Data, IFS ENS, CC-BY-4.0 — free including commercial
-use, with attribution to ECMWF. These are raw model forecasts for personal use,
-**not** a substitute for an official meteorological service, and this project is
-not affiliated with or endorsed by ECMWF.
-
-## Run the data step locally (optional)
-
-Needs the eccodes C library:
-
-```bash
-brew install eccodes          # macOS
-pip install -r requirements.txt
-python generate.py            # writes data/sheffield.json
-python -m http.server         # then open http://localhost:8000
-```
+Forecast: ECMWF IFS ensemble via Open-Meteo; underlying data ECMWF Open Data,
+CC-BY-4.0 (attribute ECMWF). Open-Meteo is free for non-commercial use. These are
+raw model forecasts for personal use — **not** a substitute for an official
+meteorological service, and not affiliated with ECMWF or Open-Meteo.
