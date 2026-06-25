@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ensemble Meteogram — ECMWF</title>
+<meta name="description" content="51-member ECMWF ensemble meteogram (temperature, precipitation, wind, cloud, pressure) for fixed locations, updated twice daily.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+         background: #0e1320; color: #e7edf6; }
+  header { padding: 14px 18px 6px; }
+  h1 { font-size: 17px; margin: 0 0 2px; font-weight: 650; }
+  .meta { color: #92a2bd; font-size: 12px; }
+  .meta b { color: #c7d4e8; font-weight: 600; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 18px 10px; }
+  select { background: #18202f; color: #e7edf6; border: 1px solid #2b3850;
+           border-radius: 6px; padding: 5px 8px; font: inherit; }
+  #wrap { padding: 0 8px 24px; }
+  canvas { width: 100%; max-width: 1100px; display: block; margin: 0 auto; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; padding: 0 18px 8px; color:#92a2bd; font-size:12px; }
+  .sw { display:inline-block; width:22px; height:10px; border-radius:2px; vertical-align:middle; margin-right:5px; }
+  footer { color:#6f7f99; font-size:11px; padding: 8px 18px 20px; max-width: 1100px; margin: 0 auto; }
+  footer a { color:#9bb4d8; }
+  .err { color:#ff9a9a; padding: 10px 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Ensemble Meteogram</h1>
+  <div class="meta" id="submeta">loading…</div>
+</header>
+<div class="bar">
+  <label>Location <select id="loc"></select></label>
+</div>
+<div class="legend">
+  <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
+  <span><span class="sw" style="background:#ffd166;height:3px"></span>median</span>
+  <span><span class="sw" style="background:#fff;height:3px"></span>control run</span>
+</div>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div class="err" id="err"></div>
+<footer>
+  Source: <a href="https://www.ecmwf.int/en/forecasts/datasets/open-data" target="_blank" rel="noopener">ECMWF Open Data</a>
+  IFS ENS (51 members), 0.25°, CC-BY-4.0. Forecasts — not a substitute for an official met service.
+  Built for personal use; not affiliated with ECMWF.
+</footer>
+
+<script>
+const LOCS = ['sheffield']; // data/<id>.json files produced by the GitHub Action
+const sel = document.getElementById('loc');
+
+// ---- small stats helpers --------------------------------------------------
+function quantile(sorted, q) {
+  const pos = (sorted.length - 1) * q, base = Math.floor(pos), rest = pos - base;
+  return sorted[base + 1] !== undefined ? sorted[base] + rest * (sorted[base + 1] - sorted[base]) : sorted[base];
+}
+function colStats(members, j) {           // percentiles of all members at step index j
+  const v = members.map(m => m[j]).filter(x => x != null && !Number.isNaN(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  return { min: v[0], max: v[v.length - 1], p10: quantile(v, .1), p25: quantile(v, .25),
+           p50: quantile(v, .5), p75: quantile(v, .75), p90: quantile(v, .9) };
+}
+
+// ---- solar elevation (for day/night shading) ------------------------------
+function solarElev(date, lat, lon) {
+  const rad = Math.PI / 180, n = date.getTime() / 86400000 + 2440587.5 - 2451545.0;
+  const L = (280.460 + 0.9856474 * n) % 360, g = (357.528 + 0.9856003 * n) % 360;
+  const lam = L + 1.915 * Math.sin(g * rad) + 0.020 * Math.sin(2 * g * rad);
+  const eps = 23.439 - 0.0000004 * n;
+  const decl = Math.asin(Math.sin(eps * rad) * Math.sin(lam * rad)) / rad;
+  const gmst = (280.46061837 + 360.98564736629 * n) % 360;
+  let ra = Math.atan2(Math.cos(eps * rad) * Math.sin(lam * rad), Math.cos(lam * rad)) / rad;
+  let ha = ((gmst + lon - ra) % 360 + 540) % 360 - 180;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(decl * rad) +
+         Math.cos(lat * rad) * Math.cos(decl * rad) * Math.cos(ha * rad)) / rad;
+}
+
+// ---- panel definitions ----------------------------------------------------
+const PANELS = [
+  { key: 't2m',   title: '2 m temperature', unit: '°C',    color: '#ff7b6b', fill: '#ff7b6b', kind: 'line', h: 130 },
+  { key: 'precip',title: 'Precipitation',   unit: 'mm',    color: '#5ec8e8', fill: '#3aa0c8', kind: 'bar',  h: 95, zero: true },
+  { key: 'wind',  title: '10 m wind',       unit: 'm/s',   color: '#9bdc8b', fill: '#5fae6f', kind: 'line', h: 110, zero: true, gust: 'gust' },
+  { key: 'cloud', title: 'Cloud cover',     unit: '%',     color: '#c9d3e6', fill: '#7f8db0', kind: 'line', h: 80, fixed: [0, 100] },
+  { key: 'mslp',  title: 'Pressure',        unit: 'hPa',   color: '#d6a6ff', fill: '#9b6fd0', kind: 'line', h: 95 },
+];
+
+let DATA = null, cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+
+function niceBounds(lo, hi) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const span = hi - lo, step = Math.pow(10, Math.floor(Math.log10(span / 4)));
+  const mults = [1, 2, 2.5, 5, 10]; let s = step;
+  for (const m of mults) { if (span / (step * m) <= 6) { s = step * m; break; } }
+  return { lo: Math.floor(lo / s) * s, hi: Math.ceil(hi / s) * s, step: s };
+}
+
+function draw() {
+  if (!DATA) return;
+  const steps = DATA.steps, valid = DATA.valid.map(s => new Date(s));
+  const n = steps.length;
+  const dpr = window.devicePixelRatio || 1;
+  const padL = 52, padR = 14, padTop = 6, axisH = 22;
+  const W = Math.min(1100, document.getElementById('wrap').clientWidth);
+  const totalH = padTop + PANELS.reduce((a, p) => a + p.h + 10, 0) + axisH;
+  cv.width = W * dpr; cv.height = totalH * dpr; cv.style.height = totalH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, totalH);
+  const plotW = W - padL - padR;
+  const x = h => padL + (h - steps[0]) / (steps[n - 1] - steps[0]) * plotW;
+
+  // day/night shading bands + day gridlines (computed once, drawn per panel)
+  const lat = DATA.location.lat, lon = DATA.location.lon;
+  const night = [];
+  for (let i = 0; i < n - 1; i++) {
+    const mid = new Date((valid[i].getTime() + valid[i + 1].getTime()) / 2);
+    if (solarElev(mid, lat, lon) < 0) night.push([x(steps[i]), x(steps[i + 1])]);
+  }
+  const dayTicks = [];
+  for (let i = 0; i < n; i++) if (valid[i].getUTCHours() === 0) dayTicks.push({ x: x(steps[i]), d: valid[i] });
+
+  let y0 = padTop;
+  for (const p of PANELS) {
+    const vd = DATA.vars[p.key];
+    const top = y0, H = p.h, bot = top + H;
+    // gather stats
+    const stats = []; for (let j = 0; j < n; j++) stats.push(vd ? colStats(vd.members, j) : null);
+    let lo = Infinity, hi = -Infinity;
+    for (const s of stats) if (s) { lo = Math.min(lo, s.min); hi = Math.max(hi, s.max); }
+    if (p.zero) lo = Math.min(lo, 0);
+    if (p.fixed) { lo = p.fixed[0]; hi = p.fixed[1]; }
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    const nb = p.fixed ? { lo: p.fixed[0], hi: p.fixed[1], step: 25 } : niceBounds(lo, hi);
+    const Y = v => bot - (v - nb.lo) / (nb.hi - nb.lo) * H;
+
+    // background
+    ctx.fillStyle = '#121a29'; ctx.fillRect(padL, top, plotW, H);
+    ctx.fillStyle = 'rgba(255,255,255,0.035)';
+    for (const [a, b] of night) ctx.fillRect(a, top, b - a, H);          // night
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+    for (const t of dayTicks) { ctx.beginPath(); ctx.moveTo(t.x, top); ctx.lineTo(t.x, bot); ctx.stroke(); }
+    // y gridlines + labels
+    ctx.fillStyle = '#7e8eaa'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+    for (let g = nb.lo; g <= nb.hi + 1e-9; g += nb.step) {
+      const yy = Y(g); ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + plotW, yy); ctx.stroke();
+      ctx.fillText(Number.isInteger(g) ? g : g.toFixed(1), padL - 5, yy + 3);
+    }
+
+    if (p.kind === 'bar') {
+      // precip: filled spread (min–max, 25–75) + median bar tops
+      const bw = plotW / n * 0.8;
+      for (let j = 0; j < n; j++) {
+        const s = stats[j]; if (!s) continue;
+        const cx = x(steps[j]);
+        ctx.fillStyle = 'rgba(94,200,232,0.18)'; ctx.fillRect(cx - bw / 2, Y(s.max), bw, Y(0) - Y(s.max));
+        ctx.fillStyle = 'rgba(94,200,232,0.35)'; ctx.fillRect(cx - bw / 2, Y(s.p75), bw, Y(0) - Y(s.p75));
+        ctx.fillStyle = p.color;                 ctx.fillRect(cx - bw / 2, Y(s.p50), bw, Math.max(0, Y(0) - Y(s.p50)));
+      }
+    } else {
+      const band = (qa, qb, alpha) => {
+        ctx.fillStyle = p.fill + alpha; ctx.beginPath();
+        for (let j = 0; j < n; j++) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s[qa])); }
+        for (let j = n - 1; j >= 0; j--) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s[qb])); }
+        ctx.closePath(); ctx.fill();
+      };
+      band('min', 'max', '22'); band('p10', 'p90', '33'); band('p25', 'p75', '55');
+      // gust median (dashed) if present
+      if (p.gust && DATA.vars[p.gust]) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.setLineDash([4, 3]); ctx.lineWidth = 1; ctx.beginPath();
+        for (let j = 0; j < n; j++) { const s = colStats(DATA.vars[p.gust].members, j); if (s) ctx.lineTo(x(steps[j]), Y(s.p50)); }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      // median
+      ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2; ctx.beginPath();
+      for (let j = 0; j < n; j++) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s.p50)); }
+      ctx.stroke();
+      // control run (member 0)
+      if (vd && vd.members[0]) {
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.3; ctx.beginPath();
+        for (let j = 0; j < n; j++) { const v = vd.members[0][j]; if (v != null) ctx.lineTo(x(steps[j]), Y(v)); }
+        ctx.stroke();
+      }
+    }
+    // panel title
+    ctx.fillStyle = '#cdd9ec'; ctx.font = '600 12px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText(`${p.title} (${p.unit})`, padL + 6, top + 14);
+    // frame
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.strokeRect(padL, top, plotW, H);
+    y0 = bot + 10;
+  }
+
+  // date axis
+  ctx.fillStyle = '#9fb0cc'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  for (const t of dayTicks) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(t.x, y0); ctx.lineTo(t.x, y0 + 4); ctx.stroke();
+    ctx.fillText(`${days[t.d.getUTCDay()]} ${t.d.getUTCDate()}`, t.x, y0 + 16);
+  }
+}
+
+async function load(id) {
+  document.getElementById('err').textContent = '';
+  try {
+    const r = await fetch(`data/${id}.json?t=${Date.now()}`);
+    if (!r.ok) throw new Error('no data yet (HTTP ' + r.status + ')');
+    DATA = await r.json();
+    document.getElementById('title').textContent = `Ensemble Meteogram — ${DATA.location.name}`;
+    const run = new Date(DATA.run);
+    document.getElementById('submeta').innerHTML =
+      `<b>${DATA.model}</b> · run ${run.toUTCString().replace(':00 GMT',' UTC')} · ` +
+      `${DATA.location.lat.toFixed(2)}°, ${DATA.location.lon.toFixed(2)}° · 15-day forecast`;
+    draw();
+  } catch (e) {
+    document.getElementById('err').textContent = 'Could not load forecast: ' + e.message +
+      '. The first run of the updater may not have completed yet.';
+  }
+}
+
+for (const id of LOCS) { const o = document.createElement('option'); o.value = id; o.textContent = id; sel.appendChild(o); }
+sel.addEventListener('change', () => load(sel.value));
+window.addEventListener('resize', draw);
+load(LOCS[0]);
+</script>
+</body>
+</html>
