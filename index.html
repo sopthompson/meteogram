@@ -74,6 +74,28 @@ const VMAP = [
   ['mslp', 'pressure_msl', 'Pressure', 'hPa'],
 ];
 
+// ---- cached fetch (cuts Open-Meteo calls; resilient to rate limits) --------
+function omCache(key) { try { return JSON.parse(localStorage.getItem('omc:' + key)); } catch { return null; } }
+function omStore(key, j) {
+  try { localStorage.setItem('omc:' + key, JSON.stringify({ t: Date.now(), j })); }
+  catch { Object.keys(localStorage).filter(k => k.startsWith('omc:')).forEach(k => localStorage.removeItem(k));
+          try { localStorage.setItem('omc:' + key, JSON.stringify({ t: Date.now(), j })); } catch {} }
+}
+async function fetchJSON(url, ttlMs, key) {
+  const c = omCache(key);
+  if (c && (ttlMs === Infinity || Date.now() - c.t < ttlMs)) return c.j;     // fresh cache → no API call
+  let r, j;
+  try { r = await fetch(url); j = await r.json().catch(() => null); }
+  catch { if (c) return c.j; throw new Error('network error — check your connection'); }
+  const reason = (j && j.error && j.reason) ? j.reason : (!r.ok ? 'HTTP ' + r.status : null);
+  if (reason) {
+    if (c) return c.j;                                                       // serve stale copy on error
+    if (/quota|limit/i.test(reason)) throw new Error('Open-Meteo rate limit reached — wait a minute and reload.');
+    throw new Error(reason);
+  }
+  omStore(key, j); return j;
+}
+
 // ---- stats -----------------------------------------------------------------
 function quantile(s, q) { const p = (s.length - 1) * q, b = Math.floor(p), r = p - b; return s[b + 1] !== undefined ? s[b] + r * (s[b + 1] - s[b]) : s[b]; }
 function colStats(members, j) {
@@ -189,9 +211,8 @@ async function load(loc) {
   document.getElementById('submeta').textContent = 'loading…';
   try {
     const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&forecast_days=15`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('Open-Meteo HTTP ' + r.status);
-    const j = await r.json(), h = j.hourly;
+    const j = await fetchJSON(url, 3600000, `fc:${loc.lat.toFixed(2)},${loc.lon.toFixed(2)}`);  // 1h cache
+    const h = j.hourly;
     let steps = h.time.map((_, i) => i), valid = h.time.map(t => t + ':00Z');
     const vars = {};
     for (const [key, base, label, unit] of VMAP) {
@@ -231,9 +252,8 @@ async function loadArchive(loc, from, to) {
   document.getElementById('submeta').textContent = 'loading history…';
   try {
     const url = `${ARCHIVE}?latitude=${loc.lat}&longitude=${loc.lon}&start_date=${from}&end_date=${to}&hourly=${HOURLY}&wind_speed_unit=ms`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('Archive HTTP ' + r.status);
-    const j = await r.json(), h = j.hourly;
+    const j = await fetchJSON(url, Infinity, `ar:${loc.lat.toFixed(2)},${loc.lon.toFixed(2)},${from},${to}`);  // history never changes
+    const h = j.hourly;
     if (!h || !h.time || !h.time.length) throw new Error('no data for that range');
     const vars = {};
     for (const [key, base, label, unit] of VMAP) { if (base in h) vars[key] = { label, unit, members: [h[base]], hres: null }; }  // one observed series
@@ -299,8 +319,8 @@ async function search() {
   const q = qEl.value.trim(); if (!q) return;
   document.getElementById('err').textContent = '';
   try {
-    const r = await fetch(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`);
-    const res = ((await r.json()).results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
+    const gj = await fetchJSON(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`, Infinity, `geo:${q.toLowerCase()}`);
+    const res = (gj.results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
     if (!res.length) { document.getElementById('err').textContent = `No place found for “${q}”.`; return; }
     recent = [...res, ...recent].slice(0, 12); rebuild(); load(res[0]);   // matches go in the dropdown to disambiguate
   } catch (e) { document.getElementById('err').textContent = 'Search failed: ' + e.message; }
