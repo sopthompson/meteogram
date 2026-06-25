@@ -36,6 +36,10 @@
   <button id="go">Search</button>
   <label>Place <select id="loc"></select></label>
   <button id="fav" title="Save to favourites">☆ Save</button>
+  <label>History <select id="hist">
+    <option value="0">none</option>
+    <option value="3" selected>recent past</option>
+  </select></label>
 </div>
 <div class="legend">
   <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
@@ -131,6 +135,8 @@ function draw() {
     const nb = p.fixed ? { lo: p.fixed[0], hi: p.fixed[1], step: 25 } : niceBounds(lo, hi), Y = v => bot - (v - nb.lo) / (nb.hi - nb.lo) * H;
     ctx.fillStyle = '#121a29'; ctx.fillRect(padL, top, plotW, H);
     ctx.fillStyle = 'rgba(255,255,255,0.035)'; for (const [a, b] of night) ctx.fillRect(a, top, b - a, H);
+    const nx = DATA.nowIndex > 0 ? x(steps[DATA.nowIndex]) : null;
+    if (nx != null) { ctx.fillStyle = 'rgba(110,130,170,0.13)'; ctx.fillRect(padL, top, nx - padL, H); }  // history tint
     ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
     for (const t of dayTicks) { ctx.beginPath(); ctx.moveTo(t.x, top); ctx.lineTo(t.x, bot); ctx.stroke(); }
     ctx.fillStyle = '#7e8eaa'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
@@ -161,6 +167,7 @@ function draw() {
       if (vd && vd.hres) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.beginPath();
         for (let j = 0; j < n; j++) { const v = vd.hres[j]; if (v != null) ctx.lineTo(x(steps[j]), Y(v)); } ctx.stroke(); }
     }
+    if (nx != null) { ctx.strokeStyle = 'rgba(255,209,102,0.7)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(nx, top); ctx.lineTo(nx, bot); ctx.stroke(); }
     ctx.fillStyle = '#cdd9ec'; ctx.font = '600 12px system-ui'; ctx.textAlign = 'left';
     ctx.fillText(`${p.title} (${p.unit})`, padL + 6, top + 14);
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.strokeRect(padL, top, plotW, H);
@@ -172,16 +179,19 @@ function draw() {
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(t.x, y0); ctx.lineTo(t.x, y0 + 4); ctx.stroke();
     ctx.fillText(`${days[t.d.getUTCDay()]} ${t.d.getUTCDate()}`, t.x, y0 + 16);
   }
+  if (DATA.nowIndex > 0) { ctx.fillStyle = '#ffd166'; ctx.font = '600 11px system-ui'; ctx.fillText('▲now', x(steps[DATA.nowIndex]), y0 + 16); }
 }
 
 async function load(loc) {
   document.getElementById('err').textContent = '';
   document.getElementById('submeta').textContent = 'loading…';
   try {
-    const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&forecast_days=15`;
+    const past = parseInt(document.getElementById('hist').value, 10) || 0;
+    const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&past_days=${past}&forecast_days=15`;
     const r = await fetch(url);
     if (!r.ok) throw new Error('Open-Meteo HTTP ' + r.status);
     const j = await r.json(), h = j.hourly;
+    let steps = h.time.map((_, i) => i), valid = h.time.map(t => t + ':00Z');
     const vars = {};
     for (const [key, base, label, unit] of VMAP) {
       if (!(base in h)) continue;
@@ -189,12 +199,17 @@ async function load(loc) {
       for (let m = 1; m <= 50; m++) { const k = `${base}_member${String(m).padStart(2, '0')}`; if (h[k]) members.push(h[k]); }
       vars[key] = { label, unit, members, hres: h[base] };   // base = ENS control member
     }
+    // trim leading steps with no data (the ensemble's past archive can start a little late)
+    const probe = (vars.t2m || vars.mslp || {}).hres;
+    let s0 = 0; if (probe) while (s0 < probe.length && probe[s0] == null) s0++;
+    if (s0 > 0) { steps = steps.slice(s0); valid = valid.slice(s0);
+      for (const k in vars) { vars[k].members = vars[k].members.map(m => m.slice(s0)); if (vars[k].hres) vars[k].hres = vars[k].hres.slice(s0); } }
+    const nowT = Date.now();
+    let nowIndex = valid.findIndex(v => new Date(v).getTime() >= nowT);
     DATA = {
       location: { name: loc.name, lat: j.latitude, lon: j.longitude },
       model: 'ECMWF IFS ENS · 51 members (via Open-Meteo)',
-      steps: h.time.map((_, i) => i),
-      valid: h.time.map(t => t + ':00Z'),
-      vars,
+      steps, valid, vars, nowIndex: nowIndex > 0 ? nowIndex : 0,
     };
     document.getElementById('title').textContent = `Ensemble Meteogram — ${loc.name}`;
     document.getElementById('submeta').innerHTML =
@@ -264,6 +279,7 @@ async function search() {
 }
 document.getElementById('go').addEventListener('click', search);
 qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+document.getElementById('hist').addEventListener('change', () => { if (loaded) load(loaded); });
 window.addEventListener('resize', draw);
 
 rebuild();
