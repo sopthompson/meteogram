@@ -1,0 +1,10 @@
+{
+  "name": "Ensemble Meteogram",
+  "short_name": "Meteogram",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b111b",
+  "theme_color": "#101722",
+  "description": "Interactive multi-model probabilistic weather forecasts",
+  "icons": [{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
