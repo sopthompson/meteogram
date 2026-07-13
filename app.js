@@ -1,0 +1,167 @@
+import { MODEL_DEFS,VARIABLE_DEFS,API_VARIABLES,statsAt,circularMeanAt,normalizeModel,niceBounds,convert,unitFor,formatValue,nearestIndex,dailySummary,solarElevation } from './lib.mjs';
+
+const API='https://ensemble-api.open-meteo.com/v1/ensemble';
+const ARCHIVE='https://archive-api.open-meteo.com/v1/archive';
+const GEO='https://geocoding-api.open-meteo.com/v1/search';
+const DEFAULT_LOC={name:'Sheffield',lat:53.38,lon:-1.47,timezone:'Europe/London'};
+const HISTORY_VARS='temperature_2m,precipitation,snowfall,wind_speed_10m,wind_direction_10m,cloud_cover,pressure_msl,freezing_level_height';
+const DEFAULT_PANELS=['t2m','precip','wind','cloud','mslp'];
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d'),els={title:$('title'),meta:$('submeta'),fresh:$('freshness'),error:$('err'),note:$('note'),tip:$('tip'),loc:$('loc')};
+
+const state={
+  location:DEFAULT_LOC,models:new Map(),selected:new Set(['ecmwf_ifs025','gfs025']),primary:'ecmwf_ifs025',
+  panels:new Set(DEFAULT_PANELS),view:'fan',range:168,units:'metric',timeMode:'local',threshold:.2,
+  cursor:null,mode:'forecast',request:0,controller:null,cacheState:'network',loadedAt:null,recent:readJSON('meteogram.recent',[]),favourites:readJSON('meteogram.favs',[])
+};
+
+function readJSON(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}}
+function writeJSON(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch{}}
+function sameLoc(a,b){return a&&b&&Math.abs(a.lat-b.lat)<.015&&Math.abs(a.lon-b.lon)<.015}
+function show(el,message){el.textContent=message||'';el.hidden=!message}
+function setLoading(message='Loading forecast…'){els.meta.textContent=message;els.fresh.className='status loading';els.fresh.textContent='Loading';}
+function formatDate(date,options={}){const timeZone=state.timeMode==='utc'?'UTC':(state.location.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone);return new Intl.DateTimeFormat(undefined,{timeZone,...options}).format(date)}
+function timeZone(){return state.timeMode==='utc'?'UTC':(state.location.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone)}
+
+function openDb(){return new Promise((resolve,reject)=>{if(!('indexedDB'in window))return reject(new Error('no IndexedDB'));const r=indexedDB.open('meteogram-cache',1);r.onupgradeneeded=()=>r.result.createObjectStore('responses');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
+async function dbGet(key){try{const db=await openDb();return await new Promise((resolve,reject)=>{const r=db.transaction('responses').objectStore('responses').get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}catch{return null}}
+async function dbSet(key,value){try{const db=await openDb();await new Promise((resolve,reject)=>{const r=db.transaction('responses','readwrite').objectStore('responses').put(value,key);r.onsuccess=()=>resolve();r.onerror=()=>reject(r.error)})}catch{}}
+
+async function fetchCached(url,key,ttl,signal){
+  const cached=await dbGet(key);
+  if(cached&&Date.now()-cached.savedAt<ttl)return{json:cached.json,source:'cache',savedAt:cached.savedAt};
+  try{const response=await fetch(url,{signal});const json=await response.json().catch(()=>null);if(!response.ok||json?.error)throw new Error(json?.reason||`HTTP ${response.status}`);const item={json,savedAt:Date.now()};await dbSet(key,item);return{...item,source:'network'}}
+  catch(error){if(error.name==='AbortError')throw error;if(cached)return{json:cached.json,source:'stale',savedAt:cached.savedAt,error};throw error}
+}
+
+function buildControls(){
+  $('models').replaceChildren(...MODEL_DEFS.map((m,i)=>{const label=document.createElement('label');label.title=`${m.name} · approximately ${m.members} members`;const input=document.createElement('input');input.type='checkbox';input.value=m.id;input.checked=state.selected.has(m.id);input.addEventListener('change',()=>toggleModel(m.id,input.checked));const dot=document.createElement('span');dot.className='model-dot';dot.style.background=m.color;label.append(input,dot,document.createTextNode(m.short));return label}));
+  $('panels').replaceChildren(...VARIABLE_DEFS.map(v=>{const label=document.createElement('label');const input=document.createElement('input');input.type='checkbox';input.value=v.key;input.checked=state.panels.has(v.key);input.addEventListener('change',()=>{input.checked?state.panels.add(v.key):state.panels.delete(v.key);render()});label.append(input,document.createTextNode(v.title));return label}));
+  rebuildPrimary();
+}
+
+function rebuildPrimary(){const select=$('primary');if(state.mode==='history'){select.replaceChildren(new Option('ERA5 reanalysis','era5',true,true));select.disabled=true;return}const available=MODEL_DEFS.filter(m=>state.selected.has(m.id)&&(!state.models.size||state.models.has(m.id)));select.replaceChildren(...available.map(m=>new Option(m.name,m.id,m.id===state.primary,m.id===state.primary)));select.disabled=available.length<2}
+
+async function toggleModel(id,checked){
+  if(checked)state.selected.add(id);else state.selected.delete(id);
+  if(!state.selected.size){state.selected.add(id);document.querySelector(`#models input[value="${id}"]`).checked=true;return}
+  if(!state.selected.has(state.primary))state.primary=[...state.selected][0];
+  rebuildPrimary();
+  updateUrl();await loadForecast();
+}
+
+function rebuildLocations(){
+  const previous=state.location,all=[];els.loc.replaceChildren();
+  const addGroup=(name,items)=>{if(!items.length)return;const group=document.createElement('optgroup');group.label=name;for(const loc of items){const index=all.push(loc)-1;const option=document.createElement('option');option.value=index;option.textContent=loc.name;group.append(option)}els.loc.append(group)};
+  addGroup(state.favourites.length?'★ Favourites':'Default',state.favourites.length?state.favourites:[DEFAULT_LOC]);
+  addGroup('Recent',state.recent.filter(x=>![...state.favourites,DEFAULT_LOC].some(y=>sameLoc(x,y))));
+  els.loc._locations=all;const index=all.findIndex(x=>sameLoc(x,previous));if(index>=0)els.loc.value=index;
+  updateFav();
+}
+function updateFav(){const saved=state.favourites.some(x=>sameLoc(x,state.location));$('fav').textContent=saved?'★ Saved':'☆ Save';$('fav').title=saved?'Remove from favourites':'Save to favourites'}
+
+async function loadForecast(){
+  const request=++state.request;state.controller?.abort();state.controller=new AbortController();state.mode='forecast';state.models.clear();show(els.error,'');show(els.note,'');setLoading();
+  const defs=MODEL_DEFS.filter(m=>state.selected.has(m.id));
+  const jobs=defs.map(async def=>{const params=new URLSearchParams({latitude:state.location.lat,longitude:state.location.lon,models:def.id,hourly:API_VARIABLES,wind_speed_unit:'ms',forecast_days:String(Math.ceil(Math.min(def.horizon,360)/24)),timezone:'GMT'});const key=`forecast:v3:${def.id}:${state.location.lat.toFixed(4)},${state.location.lon.toFixed(4)}`;const result=await fetchCached(`${API}?${params}`,key,60*60*1000,state.controller.signal);return{model:normalizeModel(result.json,def),result}});
+  const settled=await Promise.allSettled(jobs);if(request!==state.request)return;
+  const errors=[];let oldest=Date.now(),source='network';
+  for(let i=0;i<settled.length;i++){const item=settled[i];if(item.status==='fulfilled'){state.models.set(item.value.model.id,item.value.model);oldest=Math.min(oldest,item.value.result.savedAt);if(item.value.result.source==='stale')source='stale';else if(item.value.result.source==='cache'&&source!=='stale')source='cache'}else if(item.reason.name!=='AbortError')errors.push(`${defs[i].short}: ${item.reason.message}`)}
+  if(!state.models.size){show(els.error,`Could not load forecast. ${errors.join(' · ')}`);els.meta.textContent='No forecast available';els.fresh.textContent='Unavailable';return}
+  if(!state.models.has(state.primary))state.primary=state.models.keys().next().value;
+  state.loadedAt=oldest;state.cacheState=source;state.cursor=null;
+  if(errors.length)show(els.note,`Some models were unavailable: ${errors.join(' · ')}`);
+  finishLoad();
+}
+
+async function loadHistory(){
+  if(!$('from').value||!$('to').value)return show(els.error,'Choose both history dates.');
+  if($('from').value>$('to').value)return show(els.error,'The start date is after the end date.');
+  const request=++state.request;state.controller?.abort();state.controller=new AbortController();state.mode='history';state.models.clear();show(els.error,'');show(els.note,'');setLoading('Loading ERA5 reanalysis…');
+  const params=new URLSearchParams({latitude:state.location.lat,longitude:state.location.lon,start_date:$('from').value,end_date:$('to').value,hourly:HISTORY_VARS,wind_speed_unit:'ms',models:'era5',timezone:'GMT'});
+  try{const result=await fetchCached(`${ARCHIVE}?${params}`,`history:v3:era5:${state.location.lat.toFixed(4)},${state.location.lon.toFixed(4)}:${$('from').value}:${$('to').value}`,30*864e5,state.controller.signal);if(request!==state.request)return;const def={id:'era5',name:'ERA5 reanalysis',short:'ERA5',members:1,horizon:1,color:'#ffd166'};const model=normalizeModel(result.json,def);state.models.set(def.id,model);state.primary=def.id;state.loadedAt=result.savedAt;state.cacheState=result.source;state.cursor=null;finishLoad();show(els.note,'ERA5 is a model-assisted reconstruction of past weather, not a direct observation record.')}
+  catch(error){if(error.name!=='AbortError'){show(els.error,`Could not load history: ${error.message}`);els.meta.textContent='History unavailable'}}
+}
+
+function finishLoad(){
+  const primary=state.models.get(state.primary),ensembleSize=m=>(m.vars.t2m?.members.length||0)+(m.vars.t2m?.control?1:0);
+  els.title.textContent=`${state.mode==='history'?'Weather history':'Ensemble meteogram'} — ${state.location.name}`;
+  document.title=`${state.location.name} — Ensemble Meteogram`;
+  const names=[...state.models.values()].map(m=>`${m.short} (${ensembleSize(m)})`).join(', ');
+  els.meta.textContent=`${names} · ${primary.latitude.toFixed(2)}°, ${primary.longitude.toFixed(2)}° · ${Math.round(primary.elevation||0)} m · ${[...state.models.values()].reduce((n,m)=>n+ensembleSize(m),0)} member series · ${timeZone()}`;
+  els.fresh.className=`status ${state.cacheState==='stale'?'stale':'fresh'}`;els.fresh.textContent=state.cacheState==='stale'?`Stale cache · ${age(state.loadedAt)}`:state.cacheState==='cache'?`Cached · ${age(state.loadedAt)}`:'Freshly fetched';
+  rebuildPrimary();
+  writeJSON('meteogram.last',state.location);render();updateUrl();
+}
+function age(time){const mins=Math.max(0,Math.round((Date.now()-time)/60000));return mins<2?'just now':mins<60?`${mins} min ago`:`${Math.round(mins/60)} h ago`}
+
+function visible(){const primary=state.models.get(state.primary);if(!primary)return null;let start=0;if(state.mode==='forecast'){const now=Date.now();start=Math.max(0,primary.times.findIndex(t=>t.getTime()>=now));if(start<0)start=0}const end=Math.min(primary.times.length,start+(state.mode==='history'?primary.times.length:state.range)+1);return{primary,start,end,times:primary.times.slice(start,end)}}
+
+function render(){if(!state.models.size)return;renderLegend();renderDaily();draw();renderTable()}
+function renderLegend(){const parts=[];if(state.view==='fan'&&state.mode==='forecast')parts.push('<span class="legend-item"><i class="legend-line" style="background:linear-gradient(90deg,#40536d,#86a8cc)"></i>primary 10–90 / 25–75%</span>');for(const m of state.models.values())parts.push(`<span class="legend-item"><i class="legend-line" style="background:${m.color}"></i>${m.name}${m.id===state.primary?' · primary':''}</span>`);$('legend').innerHTML=parts.join('')}
+function renderDaily(){const v=visible();if(!v||state.mode==='history'){ $('daily').replaceChildren();return }const summaries=dailySummary(v.primary,v.start,v.end,state.threshold,timeZone()).slice(0,Math.ceil(state.range/24)+1);$('daily').innerHTML=summaries.map(d=>`<article class="day-card"><strong>${formatDate(d.date,{weekday:'short',day:'numeric',month:'short'})}</strong><div class="temp">${formatValue(d.max,'temperature',state.units)} / ${formatValue(d.min,'temperature',state.units)}</div><span>Rain ${formatValue(d.rain,'precipitation',state.units)} · ${d.wet?.toFixed(0)??'—'}%</span><span>Wind ${formatValue(d.wind,'wind',state.units)}${d.gust!=null?` · gust ${formatValue(d.gust,'wind',state.units)}`:''}</span></article>`).join('')}
+
+function statsFor(model,key,time,threshold=state.threshold){const variable=model.vars[key];if(!variable)return null;const index=nearestIndex(model.times,time.getTime());if(index<0||Math.abs(model.times[index]-time)>3700000)return null;const members=variable.members.length?variable.members:(variable.control?[variable.control]:[]);let s;if(key==='direction'){const mean=circularMeanAt(members,index);if(mean==null)return null;s={min:0,p10:mean,p25:mean,median:mean,p75:mean,p90:mean,max:360,count:members.length,probability:0}}else s=statsAt(members,index,threshold);if(s)s.control=variable.control?.[index];return s}
+function displayedStats(model,key,time){const def=VARIABLE_DEFS.find(v=>v.key===key)||{type:key==='gust'?'wind':''};const s=statsFor(model,key,time);if(!s)return null;for(const k of ['min','p10','p25','median','p75','p90','max','control'])s[k]=convert(s[k],def.type,state.units);return s}
+
+function draw(){
+  const v=visible();if(!v||!v.times.length)return;const panels=VARIABLE_DEFS.filter(p=>state.panels.has(p.key)&&[...state.models.values()].some(m=>m.vars[p.key]));
+  const dpr=devicePixelRatio||1,W=Math.max(300,Math.min(1170,$('chart').clientWidth)),left=W<520?43:55,right=14,top=7,axis=28,total=top+panels.reduce((n,p)=>n+p.h+12,0)+axis;
+  cv.width=Math.round(W*dpr);cv.height=Math.round(total*dpr);cv.style.height=`${total}px`;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,total);
+  const plotW=W-left-right,t0=v.times[0].getTime(),t1=v.times.at(-1).getTime()||t0+1,x=time=>left+(time-t0)/(t1-t0)*plotW;
+  const ticks=v.times.filter((t,i)=>i===0||new Intl.DateTimeFormat('en-CA',{timeZone:timeZone(),day:'2-digit'}).format(t)!==new Intl.DateTimeFormat('en-CA',{timeZone:timeZone(),day:'2-digit'}).format(v.times[i-1]));
+  const night=[];for(let i=0;i<v.times.length-1;i++){const mid=new Date((v.times[i].getTime()+v.times[i+1].getTime())/2);if(solarElevation(mid,state.location.lat,state.location.lon)<0)night.push([x(v.times[i]),x(v.times[i+1])])}
+  state.layout={left,right,W,plotW,t0,t1,panels:[],times:v.times,x};let y0=top;
+  for(const panel of panels){const bot=y0+panel.h;let lo=Infinity,hi=-Infinity;for(const model of state.models.values())for(const time of sampleTimes(v.times,1)){const s=displayedStats(model,panel.key,time);if(s){lo=Math.min(lo,s.min);hi=Math.max(hi,s.max);if(panel.gust){const g=displayedStats(model,panel.gust,time);if(g)hi=Math.max(hi,g.max)}}}if(panel.zero)lo=Math.min(lo,0);const fixed=panel.fixed?.map(n=>convert(n,panel.type,state.units)),bounds=niceBounds(lo,hi,fixed),Y=value=>bot-(value-bounds.lo)/(bounds.hi-bounds.lo)*panel.h;
+    ctx.fillStyle='#101a28';ctx.fillRect(left,y0,plotW,panel.h);ctx.fillStyle='rgba(255,255,255,.035)';for(const [a,b] of night)ctx.fillRect(a,y0,b-a,panel.h);
+    ctx.lineWidth=1;ctx.font='10px system-ui';ctx.textAlign='right';for(let g=bounds.lo;g<=bounds.hi+bounds.step/10;g+=bounds.step){const yy=Y(g);ctx.strokeStyle='rgba(255,255,255,.07)';ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(left+plotW,yy);ctx.stroke();ctx.fillStyle='#8496ae';ctx.fillText(Math.abs(g)>=10?g.toFixed(0):g.toFixed(1),left-5,yy+3)}
+    for(const tick of ticks){ctx.strokeStyle='rgba(255,255,255,.08)';ctx.beginPath();ctx.moveTo(x(tick),y0);ctx.lineTo(x(tick),bot);ctx.stroke()}
+    if(state.view==='box'&&state.mode==='forecast')drawBoxes(panel,v.times,Y,x,plotW);else drawFan(panel,v.times,Y,x);
+    ctx.fillStyle='#d6e0ed';ctx.font='600 12px system-ui';ctx.textAlign='left';ctx.fillText(`${panel.title} (${unitFor(panel.type,state.units)})`,left+6,y0+15);ctx.strokeStyle='rgba(255,255,255,.14)';ctx.strokeRect(left,y0,plotW,panel.h);
+    state.layout.panels.push({panel,top:y0,bot,Y,bounds});y0=bot+12;
+  }
+  ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillStyle='#9fb0c7';const labelEvery=Math.max(1,Math.ceil(ticks.length/Math.max(1,Math.floor(plotW/60))));for(const [i,tick] of ticks.entries())if(i%labelEvery===0){const xx=x(tick);ctx.fillText(formatDate(tick,{weekday:'short',day:'numeric'}),xx,y0+16)}
+  if(state.cursor!=null)drawCursor(state.cursor);
+}
+
+function sampleTimes(times,every){return times.filter((_,i)=>i%every===0)}
+function pathLine(times,getValue,x,Y,color,width=1.6,dash=[]){ctx.beginPath();let moved=false;for(const time of times){const value=getValue(time);if(Number.isFinite(value)){const xx=x(time),yy=Y(value);if(!moved){ctx.moveTo(xx,yy);moved=true}else ctx.lineTo(xx,yy)}else moved=false}ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dash);ctx.stroke();ctx.setLineDash([])}
+function band(times,model,key,a,b,x,Y,color,alpha){ctx.beginPath();let started=false;for(const time of times){const s=displayedStats(model,key,time);if(s){ctx.lineTo(x(time),Y(s[a]));started=true}}for(let i=times.length-1;i>=0;i--){const s=displayedStats(model,key,times[i]);if(s)ctx.lineTo(x(times[i]),Y(s[b]))}if(started){ctx.closePath();ctx.fillStyle=color+alpha;ctx.fill()}}
+function drawFan(panel,times,Y,x){const primary=state.models.get(state.primary);if(panel.type!=='direction'&&state.mode==='forecast'&&primary?.vars[panel.key]){band(times,primary,panel.key,'p10','p90',x,Y,panel.color,'2b');band(times,primary,panel.key,'p25','p75',x,Y,panel.color,'55')}for(const model of state.models.values()){pathLine(times,time=>displayedStats(model,panel.key,time)?.median,x,Y,model.color,model.id===state.primary?2.2:1.5,model.id===state.primary?[]:[5,3]);if(panel.gust&&model.id===state.primary)pathLine(times,time=>displayedStats(model,panel.gust,time)?.median,x,Y,'#f1f5fa',1.1,[3,3])}if(primary?.vars[panel.key]?.control)pathLine(times,time=>displayedStats(primary,panel.key,time)?.control,x,Y,'#ffffff',1)}
+function drawBoxes(panel,times,Y,x,plotW){const models=[...state.models.values()],hours=state.range<=48?6:state.range<=168?12:24,stride=Math.max(1,hours),sample=times.filter((_,i)=>i%stride===0),group=Math.min(plotW/sample.length*.8,26),bw=Math.max(2,group/models.length-1);for(const time of sample){models.forEach((model,mi)=>{const s=displayedStats(model,panel.key,time);if(!s)return;const xx=x(time)-group/2+(mi+.5)*group/models.length;ctx.strokeStyle=model.color;ctx.fillStyle=model.color+'55';ctx.lineWidth=1;if(panel.type==='direction'){ctx.beginPath();ctx.arc(xx,Y(s.median),Math.max(2,bw/2),0,Math.PI*2);ctx.fill();ctx.stroke();return}ctx.beginPath();ctx.moveTo(xx,Y(s.p10));ctx.lineTo(xx,Y(s.p90));ctx.stroke();ctx.fillRect(xx-bw/2,Y(s.p75),bw,Math.max(1,Y(s.p25)-Y(s.p75)));ctx.strokeRect(xx-bw/2,Y(s.p75),bw,Math.max(1,Y(s.p25)-Y(s.p75)));ctx.beginPath();ctx.moveTo(xx-bw/2,Y(s.median));ctx.lineTo(xx+bw/2,Y(s.median));ctx.stroke();ctx.beginPath();ctx.moveTo(xx-bw/3,Y(s.p10));ctx.lineTo(xx+bw/3,Y(s.p10));ctx.moveTo(xx-bw/3,Y(s.p90));ctx.lineTo(xx+bw/3,Y(s.p90));ctx.stroke()})}}
+
+function cursorTime(clientX){const r=cv.getBoundingClientRect(),px=(clientX-r.left)*(cv.width/(devicePixelRatio||1))/r.width,l=state.layout;return Math.max(l.t0,Math.min(l.t1,l.t0+(px-l.left)/l.plotW*(l.t1-l.t0)))}
+function setCursor(time,clientX,clientY){state.cursor=time;draw();renderTooltip(time,clientX,clientY)}
+function drawCursor(time){const l=state.layout,xx=l.x(new Date(time));ctx.strokeStyle='rgba(255,209,102,.9)';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(xx,l.panels[0]?.top||0);ctx.lineTo(xx,l.panels.at(-1)?.bot||cv.height);ctx.stroke()}
+function renderTooltip(time,clientX,clientY){const l=state.layout,date=new Date(time),primary=state.models.get(state.primary),rows=[];for(const {panel} of l.panels){const s=statsFor(primary,panel.key,date);if(!s)continue;const extra=panel.key==='precip'?` · ${s.probability.toFixed(0)}% ≥ ${state.threshold} mm`:'';rows.push(`<div class="tip-row"><span>${panel.title}</span><b>${formatValue(s.median,panel.type,state.units)}${extra}</b></div>`);if(panel.type!=='direction')rows.push(`<div class="tip-row"><span>10–90%</span><span>${formatValue(s.p10,panel.type,state.units)} – ${formatValue(s.p90,panel.type,state.units)}</span></div>`)}rows.push(...[...state.models.values()].filter(m=>m.id!==state.primary).map(m=>{const s=statsFor(m,'t2m',date);return s?`<div class="tip-row"><span>${m.short} temperature</span><span>${formatValue(s.median,'temperature',state.units)}</span></div>`:''}));els.tip.innerHTML=`<strong>${formatDate(date,{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZoneName:'short'})}</strong>${rows.join('')}`;els.tip.hidden=false;const rect=$('chart').getBoundingClientRect(),tipW=els.tip.offsetWidth,tipH=els.tip.offsetHeight,x=clientX==null?l.x(date)-tipW/2:clientX-rect.left+12,y=clientY==null?8:clientY-rect.top+12;els.tip.style.left=`${Math.max(4,Math.min(rect.width-tipW-4,x))}px`;els.tip.style.top=`${Math.max(4,Math.min(rect.height-tipH-4,y))}px`}
+
+function renderTable(){const v=visible(),panels=VARIABLE_DEFS.filter(p=>state.panels.has(p.key));$('table-head').innerHTML=`<tr><th>Valid time</th><th>Model</th>${panels.map(p=>`<th>${p.title}<br>${unitFor(p.type,state.units)}</th>`).join('')}</tr>`;const stride=Math.max(1,Math.round(v.times.length/60));const rows=[];for(let i=0;i<v.times.length;i+=stride)for(const model of state.models.values())rows.push(`<tr><td>${formatDate(v.times[i],{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</td><td>${model.short}</td>${panels.map(p=>{const s=statsFor(model,p.key,v.times[i]);return`<td>${s?`${formatValue(s.median,p.type,state.units)} (${formatValue(s.p10,p.type,state.units)}–${formatValue(s.p90,p.type,state.units)})`:'—'}</td>`}).join('')}</tr>`);$('table-body').innerHTML=rows.join('');$('table-caption').textContent=`${state.mode==='history'?'Reanalysis':'Forecast'} values; median and 10–90% range`}
+
+async function search(){const q=$('q').value.trim();if(!q)return;show(els.error,'');$('go').disabled=true;try{const result=await fetchCached(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`,`geo:v2:${q.toLowerCase()}`,30*864e5);const places=(result.json.results||[]).map(x=>({name:[x.name,x.admin1,x.country].filter(Boolean).join(', '),lat:x.latitude,lon:x.longitude,timezone:x.timezone}));if(!places.length)return show(els.error,`No place found for “${q}”.`);state.recent=[...places,...state.recent.filter(r=>!places.some(p=>sameLoc(p,r)))].slice(0,15);writeJSON('meteogram.recent',state.recent);state.location=places[0];rebuildLocations();await loadForecast()}catch(error){show(els.error,`Search failed: ${error.message}`)}finally{$('go').disabled=false}}
+async function useLocation(){if(!navigator.geolocation)return show(els.error,'Geolocation is not supported by this browser.');navigator.geolocation.getCurrentPosition(async pos=>{state.location={name:'Current location',lat:pos.coords.latitude,lon:pos.coords.longitude,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone};state.recent.unshift(state.location);rebuildLocations();await loadForecast()},error=>show(els.error,`Could not use your location: ${error.message}`),{enableHighAccuracy:false,timeout:10000})}
+
+function updateUrl(){if(!state.location)return;const p=new URLSearchParams({lat:state.location.lat.toFixed(4),lon:state.location.lon.toFixed(4),name:state.location.name,tz:state.location.timezone||'',models:[...state.selected].join(','),primary:state.mode==='forecast'?state.primary:[...state.selected][0],view:state.view,range:state.range,units:state.units,time:state.timeMode,rain:state.threshold,panels:[...state.panels].join(',')});history.replaceState(null,'',`${location.pathname}?${p}`)}
+function loadUrl(){const p=new URLSearchParams(location.search),lat=Number(p.get('lat')),lon=Number(p.get('lon'));if(p.has('lat')&&p.has('lon')&&Number.isFinite(lat)&&Number.isFinite(lon))state.location={name:p.get('name')||`${lat.toFixed(2)}, ${lon.toFixed(2)}`,lat,lon,timezone:p.get('tz')||Intl.DateTimeFormat().resolvedOptions().timeZone};else state.location=readJSON('meteogram.last',DEFAULT_LOC);const ids=(p.get('models')||'').split(',').filter(id=>MODEL_DEFS.some(m=>m.id===id));if(ids.length)state.selected=new Set(ids);if(['fan','box'].includes(p.get('view')))state.view=p.get('view');if([48,168,360].includes(Number(p.get('range'))))state.range=Number(p.get('range'));if(['metric','uk','us'].includes(p.get('units')))state.units=p.get('units');if(['local','utc'].includes(p.get('time')))state.timeMode=p.get('time');if(Number.isFinite(Number(p.get('rain')))&&Number(p.get('rain'))>0)state.threshold=Number(p.get('rain'));const panels=(p.get('panels')||'').split(',').filter(key=>VARIABLE_DEFS.some(v=>v.key===key));if(panels.length)state.panels=new Set(panels);state.primary=state.selected.has(p.get('primary'))?p.get('primary'):[...state.selected][0]}
+
+function exportCsv(){const v=visible(),rows=[['valid_time','model','variable','member','value','unit']];for(const model of state.models.values())for(const time of v.times){const index=nearestIndex(model.times,time);for(const def of VARIABLE_DEFS.filter(p=>state.panels.has(p.key))){const variable=model.vars[def.key];if(!variable)continue;if(variable.control)rows.push([time.toISOString(),model.id,def.key,'control',convert(variable.control[index],def.type,state.units),unitFor(def.type,state.units)]);variable.members.forEach((member,mi)=>rows.push([time.toISOString(),model.id,def.key,`member${String(mi+1).padStart(2,'0')}`,convert(member[index],def.type,state.units),unitFor(def.type,state.units)]))}}download(new Blob([rows.map(r=>r.map(csvCell).join(',')).join('\n')],{type:'text/csv'}),`meteogram-${slug(state.location.name)}.csv`)}
+function csvCell(v){const s=String(v??'');return/[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s}function slug(s){return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}function download(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function exportPng(){cv.toBlob(blob=>blob&&download(blob,`meteogram-${slug(state.location.name)}.png`),'image/png')}
+async function share(){updateUrl();try{await navigator.clipboard.writeText(location.href);$('share').textContent='Copied';setTimeout(()=>$('share').textContent='Copy link',1800)}catch{show(els.error,'Could not copy the link; copy it from the address bar.')}}
+
+function bind(){
+  $('go').addEventListener('click',search);$('q').addEventListener('keydown',e=>{if(e.key==='Enter')search()});$('near').addEventListener('click',useLocation);els.loc.addEventListener('change',async()=>{state.location=els.loc._locations[Number(els.loc.value)];await loadForecast()});
+  $('fav').addEventListener('click',()=>{const i=state.favourites.findIndex(x=>sameLoc(x,state.location));if(i>=0)state.favourites.splice(i,1);else state.favourites.push(state.location);writeJSON('meteogram.favs',state.favourites);rebuildLocations()});
+  document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{state.view=b.dataset.view;document.querySelectorAll('[data-view]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b)});updateUrl();render()}));
+  document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',()=>{state.range=Number(b.dataset.range);document.querySelectorAll('[data-range]').forEach(x=>x.classList.toggle('active',x===b));updateUrl();render()}));
+  $('units').addEventListener('change',()=>{state.units=$('units').value;updateUrl();render()});$('time-mode').addEventListener('change',()=>{state.timeMode=$('time-mode').value;finishLoad()});$('rain-threshold').addEventListener('change',()=>{state.threshold=Number($('rain-threshold').value);render()});
+  $('primary').addEventListener('change',()=>{state.primary=$('primary').value;updateUrl();render()});
+  $('history').addEventListener('click',loadHistory);$('forecast').addEventListener('click',loadForecast);$('share').addEventListener('click',share);$('csv').addEventListener('click',exportCsv);$('png').addEventListener('click',exportPng);
+  cv.addEventListener('pointermove',e=>setCursor(cursorTime(e.clientX),e.clientX,e.clientY));cv.addEventListener('pointerdown',e=>setCursor(cursorTime(e.clientX),e.clientX,e.clientY));cv.addEventListener('pointerleave',()=>{if(!matchMedia('(pointer:coarse)').matches){els.tip.hidden=true;state.cursor=null;draw()}});cv.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key)||!state.layout)return;e.preventDefault();const step=3600000*(e.key==='ArrowRight'?1:-1),current=state.cursor??state.layout.t0;setCursor(Math.max(state.layout.t0,Math.min(state.layout.t1,current+step)))});
+  addEventListener('resize',()=>requestAnimationFrame(draw));
+}
+
+function initDates(){const max=new Date(Date.now()-6*864e5),iso=d=>d.toISOString().slice(0,10);$('from').min=$('to').min='1940-01-01';$('from').max=$('to').max=iso(max);$('to').value=iso(max);$('from').value=iso(new Date(max-6*864e5))}
+function syncControls(){document.querySelectorAll('#models input').forEach(x=>x.checked=state.selected.has(x.value));document.querySelectorAll('[data-view]').forEach(x=>{x.classList.toggle('active',x.dataset.view===state.view);x.setAttribute('aria-pressed',x.dataset.view===state.view)});document.querySelectorAll('[data-range]').forEach(x=>x.classList.toggle('active',Number(x.dataset.range)===state.range));$('units').value=state.units;$('time-mode').value=state.timeMode;if([...$('rain-threshold').options].some(o=>Number(o.value)===state.threshold))$('rain-threshold').value=state.threshold}
+
+loadUrl();buildControls();syncControls();state.recent=[state.location,...state.recent.filter(x=>!sameLoc(x,state.location))].slice(0,15);rebuildLocations();initDates();bind();loadForecast();
+if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(()=>{});

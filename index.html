@@ -1,358 +1,115 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ensemble Meteogram — ECMWF</title>
-<meta name="description" content="51-member ECMWF IFS ensemble meteogram (temperature, precipitation, wind, cloud, pressure) — live, via Open-Meteo.">
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.4 -apple-system, system-ui, Segoe UI, Roboto, sans-serif; background: #0e1320; color: #e7edf6; }
-  header { padding: 14px 18px 6px; }
-  h1 { font-size: 17px; margin: 0 0 2px; font-weight: 650; }
-  .meta { color: #92a2bd; font-size: 12px; }
-  .meta b { color: #c7d4e8; font-weight: 600; }
-  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 18px 10px; }
-  select, input { background: #18202f; color: #e7edf6; border: 1px solid #2b3850; border-radius: 6px; padding: 5px 8px; font: inherit; }
-  input { width: 78px; }
-  button { background: #24405f; color: #e7edf6; border: 1px solid #2b3850; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
-  #wrap { padding: 0 8px 24px; }
-  canvas { width: 100%; max-width: 1100px; display: block; margin: 0 auto; }
-  .legend { display:flex; gap:14px; flex-wrap:wrap; padding: 0 18px 8px; color:#92a2bd; font-size:12px; }
-  .sw { display:inline-block; width:22px; height:10px; border-radius:2px; vertical-align:middle; margin-right:5px; }
-  footer { color:#6f7f99; font-size:11px; padding: 8px 18px 20px; max-width: 1100px; margin: 0 auto; }
-  footer a { color:#9bb4d8; }
-  .err { color:#ff9a9a; padding: 10px 18px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101722">
+  <meta name="description" content="Interactive multi-model ensemble meteograms with uncertainty, probabilities and box-whisker comparisons.">
+  <title>Ensemble Meteogram</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header>
-  <h1 id="title">Ensemble Meteogram</h1>
-  <div class="meta" id="submeta">loading…</div>
-</header>
-<div class="bar">
-  <input id="q" type="text" placeholder="Search any town or city…">
-  <button id="go">Search</button>
-  <label>Place <select id="loc"></select></label>
-  <button id="fav" title="Save to favourites">☆ Save</button>
-  <span style="color:#6f7f99">│ history:</span>
-  <label>from <input type="date" id="from"></label>
-  <label>to <input type="date" id="to"></label>
-  <button id="view" title="Observed weather (ERA5) for this date range">View</button>
-  <button id="fc" title="Back to live ensemble forecast">↻ Forecast</button>
-</div>
-<div class="legend">
-  <span><span class="sw" style="background:linear-gradient(90deg,#3a557e,#7fa8df)"></span>ensemble spread (min–max / 10–90 / 25–75%)</span>
-  <span><span class="sw" style="background:#ffd166;height:3px"></span>median</span>
-  <span><span class="sw" style="background:#fff;height:3px"></span>control run</span>
-</div>
-<div id="wrap"><canvas id="cv"></canvas></div>
-<div class="err" id="err"></div>
-<footer>
-  Data: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> Ensemble API, model
-  <b>ECMWF IFS 0.25°</b> (51-member ensemble) — derived from
-  <a href="https://www.ecmwf.int/en/forecasts/datasets/open-data" target="_blank" rel="noopener">ECMWF Open Data</a> (CC-BY-4.0).
-  Hourly, 15-day. Forecasts for personal use — not an official met service; not affiliated with ECMWF or Open-Meteo.
-</footer>
+  <a class="skip" href="#chart">Skip to forecast chart</a>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Probabilistic weather guidance</p>
+      <h1 id="title">Ensemble Meteogram</h1>
+      <p id="submeta" class="meta" aria-live="polite">Loading forecast…</p>
+    </div>
+    <div id="freshness" class="status loading" role="status">Loading</div>
+  </header>
 
-<script>
-const LOCS = [   // saved favourites; search adds any place via geocoding
-  { name: 'Sheffield', lat: 53.38, lon: -1.47 },
-];
-const GEO = 'https://geocoding-api.open-meteo.com/v1/search';
-const ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';   // ERA5 reanalysis (observed past, to 1940)
-const API = 'https://ensemble-api.open-meteo.com/v1/ensemble';
-const HOURLY = 'temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,cloud_cover,pressure_msl';
-// frontend key, Open-Meteo base field, label, unit
-const VMAP = [
-  ['t2m', 'temperature_2m', '2 m temperature', '°C'],
-  ['precip', 'precipitation', 'Precipitation', 'mm'],
-  ['wind', 'wind_speed_10m', '10 m wind', 'm/s'],
-  ['gust', 'wind_gusts_10m', 'Wind gust', 'm/s'],
-  ['cloud', 'cloud_cover', 'Cloud cover', '%'],
-  ['mslp', 'pressure_msl', 'Pressure', 'hPa'],
-];
+  <main>
+    <section class="controls" aria-label="Forecast controls">
+      <div class="search-row">
+        <label class="search-field" for="q">Find a place
+          <input id="q" type="search" autocomplete="off" placeholder="Town, city or postcode">
+        </label>
+        <button id="go" type="button">Search</button>
+        <button id="near" type="button" title="Use your current location">◎ Near me</button>
+        <label for="loc">Place
+          <select id="loc"></select>
+        </label>
+        <button id="fav" type="button" title="Save to favourites">☆ Save</button>
+      </div>
 
-// ---- cached fetch (cuts Open-Meteo calls; resilient to rate limits) --------
-function omCache(key) { try { return JSON.parse(localStorage.getItem('omc:' + key)); } catch { return null; } }
-function omStore(key, j) {
-  try { localStorage.setItem('omc:' + key, JSON.stringify({ t: Date.now(), j })); }
-  catch { Object.keys(localStorage).filter(k => k.startsWith('omc:')).forEach(k => localStorage.removeItem(k));
-          try { localStorage.setItem('omc:' + key, JSON.stringify({ t: Date.now(), j })); } catch {} }
-}
-async function fetchJSON(url, ttlMs, key) {
-  const c = omCache(key);
-  if (c && (ttlMs === Infinity || Date.now() - c.t < ttlMs)) return c.j;     // fresh cache → no API call
-  let r, j;
-  try { r = await fetch(url); j = await r.json().catch(() => null); }
-  catch { if (c) return c.j; throw new Error('network error — check your connection'); }
-  const reason = (j && j.error && j.reason) ? j.reason : (!r.ok ? 'HTTP ' + r.status : null);
-  if (reason) {
-    if (c) return c.j;                                                       // serve stale copy on error
-    if (/quota|limit/i.test(reason)) throw new Error('Open-Meteo rate limit reached — wait a minute and reload.');
-    throw new Error(reason);
-  }
-  omStore(key, j); return j;
-}
-// transient error banner: shows briefly, then clears itself (data already on screen stays)
-let _errTimer = null;
-function setErr(msg) {
-  const e = document.getElementById('err'); e.textContent = msg || '';
-  clearTimeout(_errTimer); if (msg) _errTimer = setTimeout(() => { e.textContent = ''; }, 6000);
-}
+      <div class="control-grid">
+        <fieldset id="model-set">
+          <legend>Ensemble models</legend>
+          <div id="models" class="checks"></div>
+          <label class="primary-model">Primary model <select id="primary"></select></label>
+        </fieldset>
+        <fieldset>
+          <legend>View</legend>
+          <div class="segmented" role="group" aria-label="Chart style">
+            <button class="active" type="button" data-view="fan" aria-pressed="true">Fan</button>
+            <button type="button" data-view="box" aria-pressed="false">Box–whisker</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Range</legend>
+          <div class="segmented" role="group" aria-label="Forecast range">
+            <button type="button" data-range="48">48 h</button>
+            <button class="active" type="button" data-range="168">7 days</button>
+            <button type="button" data-range="360">15 days</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Units &amp; time</legend>
+          <div class="inline-fields">
+            <label>Units <select id="units"><option value="metric">Metric</option><option value="uk">UK</option><option value="us">US</option></select></label>
+            <label>Time <select id="time-mode"><option value="local">Place local</option><option value="utc">UTC</option></select></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Rain probability</legend>
+          <label>Threshold <select id="rain-threshold"><option value="0.1">≥ 0.1 mm/h</option><option value="0.2" selected>≥ 0.2 mm/h</option><option value="1">≥ 1 mm/h</option><option value="5">≥ 5 mm/h</option></select></label>
+        </fieldset>
+      </div>
 
-// ---- stats -----------------------------------------------------------------
-function quantile(s, q) { const p = (s.length - 1) * q, b = Math.floor(p), r = p - b; return s[b + 1] !== undefined ? s[b] + r * (s[b + 1] - s[b]) : s[b]; }
-function colStats(members, j) {
-  const v = members.map(m => m[j]).filter(x => x != null && !Number.isNaN(x)).sort((a, b) => a - b);
-  if (!v.length) return null;
-  return { min: v[0], max: v[v.length - 1], p10: quantile(v, .1), p25: quantile(v, .25), p50: quantile(v, .5), p75: quantile(v, .75), p90: quantile(v, .9) };
-}
-// ---- solar elevation (day/night shading) -----------------------------------
-function solarElev(date, lat, lon) {
-  const rad = Math.PI / 180, n = date.getTime() / 86400000 + 2440587.5 - 2451545.0;
-  const L = (280.460 + 0.9856474 * n) % 360, g = (357.528 + 0.9856003 * n) % 360;
-  const lam = L + 1.915 * Math.sin(g * rad) + 0.020 * Math.sin(2 * g * rad), eps = 23.439 - 0.0000004 * n;
-  const decl = Math.asin(Math.sin(eps * rad) * Math.sin(lam * rad)) / rad;
-  const gmst = (280.46061837 + 360.98564736629 * n) % 360;
-  const ra = Math.atan2(Math.cos(eps * rad) * Math.sin(lam * rad), Math.cos(lam * rad)) / rad;
-  const ha = ((gmst + lon - ra) % 360 + 540) % 360 - 180;
-  return Math.asin(Math.sin(lat * rad) * Math.sin(decl * rad) + Math.cos(lat * rad) * Math.cos(decl * rad) * Math.cos(ha * rad)) / rad;
-}
+      <details class="more-controls">
+        <summary>Panels, history and export</summary>
+        <div class="details-grid">
+          <fieldset><legend>Panels</legend><div id="panels" class="checks"></div></fieldset>
+          <fieldset class="history"><legend>ERA5 reanalysis history</legend>
+            <label>From <input type="date" id="from"></label>
+            <label>To <input type="date" id="to"></label>
+            <button id="history" type="button">View history</button>
+            <button id="forecast" type="button">Live forecast</button>
+          </fieldset>
+          <fieldset><legend>Share &amp; export</legend>
+            <div class="button-row"><button id="share" type="button">Copy link</button><button id="csv" type="button">CSV</button><button id="png" type="button">PNG</button></div>
+          </fieldset>
+        </div>
+      </details>
+    </section>
 
-const PANELS = [
-  { key: 't2m',   title: '2 m temperature', unit: '°C',  color: '#ff7b6b', fill: '#ff7b6b', kind: 'line', h: 130 },
-  { key: 'precip',title: 'Precipitation',   unit: 'mm',  color: '#5ec8e8', fill: '#3aa0c8', kind: 'bar',  h: 95, zero: true },
-  { key: 'wind',  title: '10 m wind',       unit: 'm/s', color: '#9bdc8b', fill: '#5fae6f', kind: 'line', h: 110, zero: true, gust: 'gust' },
-  { key: 'cloud', title: 'Cloud cover',     unit: '%',   color: '#c9d3e6', fill: '#7f8db0', kind: 'line', h: 80, fixed: [0, 100] },
-  { key: 'mslp',  title: 'Pressure',        unit: 'hPa', color: '#d6a6ff', fill: '#9b6fd0', kind: 'line', h: 95 },
-];
+    <div id="err" class="notice error" role="alert" hidden></div>
+    <div id="note" class="notice" role="status" hidden></div>
 
-let DATA = null; const cv = document.getElementById('cv'), ctx = cv.getContext('2d'), sel = document.getElementById('loc');
+    <section id="daily" class="daily" aria-label="Daily forecast summary"></section>
 
-function niceBounds(lo, hi) {
-  if (lo === hi) { lo -= 1; hi += 1; }
-  const span = hi - lo, step = Math.pow(10, Math.floor(Math.log10(span / 4)));
-  let s = step; for (const m of [1, 2, 2.5, 5, 10]) { if (span / (step * m) <= 6) { s = step * m; break; } }
-  return { lo: Math.floor(lo / s) * s, hi: Math.ceil(hi / s) * s, step: s };
-}
+    <section class="chart-card" aria-label="Ensemble forecast charts">
+      <div id="legend" class="legend"></div>
+      <div id="chart" class="chart-wrap">
+        <canvas id="cv" tabindex="0" aria-describedby="chart-help"></canvas>
+        <div id="tip" class="tooltip" hidden></div>
+      </div>
+      <p id="chart-help" class="help">Move the pointer, tap, or use the left and right arrow keys to inspect a valid time.</p>
+    </section>
 
-function draw() {
-  if (!DATA) return;
-  const steps = DATA.steps, valid = DATA.valid.map(s => new Date(s)), n = steps.length;
-  const dpr = window.devicePixelRatio || 1, padL = 52, padR = 14, padTop = 6, axisH = 22;
-  const W = Math.min(1100, document.getElementById('wrap').clientWidth);
-  const totalH = padTop + PANELS.reduce((a, p) => a + p.h + 10, 0) + axisH;
-  cv.width = W * dpr; cv.height = totalH * dpr; cv.style.height = totalH + 'px';
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, totalH);
-  const plotW = W - padL - padR, x = h => padL + (h - steps[0]) / (steps[n - 1] - steps[0]) * plotW;
-  const lat = DATA.location.lat, lon = DATA.location.lon;
-  const night = [];
-  for (let i = 0; i < n - 1; i++) { const mid = new Date((valid[i].getTime() + valid[i + 1].getTime()) / 2); if (solarElev(mid, lat, lon) < 0) night.push([x(steps[i]), x(steps[i + 1])]); }
-  const dayTicks = [];
-  for (let i = 0; i < n; i++) if (valid[i].getUTCHours() === 0) dayTicks.push({ x: x(steps[i]), d: valid[i] });
+    <details class="data-table">
+      <summary>Accessible forecast data</summary>
+      <div class="table-scroll"><table><caption id="table-caption">Forecast values at six-hour intervals</caption><thead id="table-head"></thead><tbody id="table-body"></tbody></table></div>
+    </details>
+  </main>
 
-  let y0 = padTop;
-  for (const p of PANELS) {
-    const vd = DATA.vars[p.key], top = y0, H = p.h, bot = top + H;
-    const stats = []; for (let j = 0; j < n; j++) stats.push(vd ? colStats(vd.members, j) : null);
-    let lo = Infinity, hi = -Infinity;
-    for (const s of stats) if (s) { lo = Math.min(lo, s.min); hi = Math.max(hi, s.max); }
-    if (p.zero) lo = Math.min(lo, 0);
-    if (p.fixed) { lo = p.fixed[0]; hi = p.fixed[1]; }
-    if (!isFinite(lo)) { lo = 0; hi = 1; }
-    const nb = p.fixed ? { lo: p.fixed[0], hi: p.fixed[1], step: 25 } : niceBounds(lo, hi), Y = v => bot - (v - nb.lo) / (nb.hi - nb.lo) * H;
-    ctx.fillStyle = '#121a29'; ctx.fillRect(padL, top, plotW, H);
-    ctx.fillStyle = 'rgba(255,255,255,0.035)'; for (const [a, b] of night) ctx.fillRect(a, top, b - a, H);
-    const nx = DATA.nowIndex > 0 ? x(steps[DATA.nowIndex]) : null;
-    if (nx != null) { ctx.fillStyle = 'rgba(110,130,170,0.13)'; ctx.fillRect(padL, top, nx - padL, H); }  // history tint
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
-    for (const t of dayTicks) { ctx.beginPath(); ctx.moveTo(t.x, top); ctx.lineTo(t.x, bot); ctx.stroke(); }
-    ctx.fillStyle = '#7e8eaa'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
-    for (let g = nb.lo; g <= nb.hi + 1e-9; g += nb.step) {
-      const yy = Y(g); ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + plotW, yy); ctx.stroke();
-      ctx.fillText(Number.isInteger(g) ? g : g.toFixed(1), padL - 5, yy + 3);
-    }
-    if (p.kind === 'bar') {
-      const bw = Math.max(1, plotW / n * 0.8);
-      for (let j = 0; j < n; j++) { const s = stats[j]; if (!s) continue; const cx = x(steps[j]);
-        ctx.fillStyle = 'rgba(94,200,232,0.18)'; ctx.fillRect(cx - bw / 2, Y(s.max), bw, Y(0) - Y(s.max));
-        ctx.fillStyle = 'rgba(94,200,232,0.35)'; ctx.fillRect(cx - bw / 2, Y(s.p75), bw, Y(0) - Y(s.p75));
-        ctx.fillStyle = p.color; ctx.fillRect(cx - bw / 2, Y(s.p50), bw, Math.max(0, Y(0) - Y(s.p50))); }
-    } else {
-      const band = (qa, qb, al) => { ctx.fillStyle = p.fill + al; ctx.beginPath();
-        for (let j = 0; j < n; j++) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s[qa])); }
-        for (let j = n - 1; j >= 0; j--) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s[qb])); }
-        ctx.closePath(); ctx.fill(); };
-      band('min', 'max', '22'); band('p10', 'p90', '33'); band('p25', 'p75', '55');
-      if (p.gust && DATA.vars[p.gust]) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.setLineDash([4, 3]); ctx.lineWidth = 1; ctx.beginPath();
-        for (let j = 0; j < n; j++) { const s = colStats(DATA.vars[p.gust].members, j); if (s) ctx.lineTo(x(steps[j]), Y(s.p50)); }
-        ctx.stroke(); ctx.setLineDash([]);
-      }
-      ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2; ctx.beginPath();
-      for (let j = 0; j < n; j++) { const s = stats[j]; if (s) ctx.lineTo(x(steps[j]), Y(s.p50)); } ctx.stroke();
-      if (vd && vd.hres) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.beginPath();
-        for (let j = 0; j < n; j++) { const v = vd.hres[j]; if (v != null) ctx.lineTo(x(steps[j]), Y(v)); } ctx.stroke(); }
-    }
-    if (nx != null) { ctx.strokeStyle = 'rgba(255,209,102,0.7)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(nx, top); ctx.lineTo(nx, bot); ctx.stroke(); }
-    ctx.fillStyle = '#cdd9ec'; ctx.font = '600 12px system-ui'; ctx.textAlign = 'left';
-    ctx.fillText(`${p.title} (${p.unit})`, padL + 6, top + 14);
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.strokeRect(padL, top, plotW, H);
-    y0 = bot + 10;
-  }
-  ctx.fillStyle = '#9fb0cc'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  for (const t of dayTicks) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(t.x, y0); ctx.lineTo(t.x, y0 + 4); ctx.stroke();
-    ctx.fillText(`${days[t.d.getUTCDay()]} ${t.d.getUTCDate()}`, t.x, y0 + 16);
-  }
-  if (DATA.nowIndex > 0) { ctx.fillStyle = '#ffd166'; ctx.font = '600 11px system-ui'; ctx.fillText('▲now', x(steps[DATA.nowIndex]), y0 + 16); }
-}
-
-async function load(loc) {
-  setErr('');
-  document.getElementById('submeta').textContent = 'loading…';
-  try {
-    const url = `${API}?latitude=${loc.lat}&longitude=${loc.lon}&models=ecmwf_ifs025&hourly=${HOURLY}&wind_speed_unit=ms&forecast_days=15`;
-    const j = await fetchJSON(url, 3600000, `fc:${loc.lat.toFixed(2)},${loc.lon.toFixed(2)}`);  // 1h cache
-    const h = j.hourly;
-    let steps = h.time.map((_, i) => i), valid = h.time.map(t => t + ':00Z');
-    const vars = {};
-    for (const [key, base, label, unit] of VMAP) {
-      if (!(base in h)) continue;
-      const members = [];
-      for (let m = 1; m <= 50; m++) { const k = `${base}_member${String(m).padStart(2, '0')}`; if (h[k]) members.push(h[k]); }
-      vars[key] = { label, unit, members, hres: h[base] };   // base = ENS control member
-    }
-    // trim leading steps with no data (the ensemble's past archive can start a little late)
-    const probe = (vars.t2m || vars.mslp || {}).hres;
-    let s0 = 0; if (probe) while (s0 < probe.length && probe[s0] == null) s0++;
-    if (s0 > 0) { steps = steps.slice(s0); valid = valid.slice(s0);
-      for (const k in vars) { vars[k].members = vars[k].members.map(m => m.slice(s0)); if (vars[k].hres) vars[k].hres = vars[k].hres.slice(s0); } }
-    const nowT = Date.now();
-    let nowIndex = valid.findIndex(v => new Date(v).getTime() >= nowT);
-    DATA = {
-      location: { name: loc.name, lat: j.latitude, lon: j.longitude },
-      model: 'ECMWF IFS ENS · 51 members (via Open-Meteo)',
-      steps, valid, vars, nowIndex: nowIndex > 0 ? nowIndex : 0,
-    };
-    document.getElementById('title').textContent = `Ensemble Meteogram — ${loc.name}`;
-    document.getElementById('submeta').innerHTML =
-      `<b>${DATA.model}</b> · ${j.latitude.toFixed(2)}°, ${j.longitude.toFixed(2)}°` +
-      (j.elevation != null ? ` · ${Math.round(j.elevation)} m` : '') +
-      ` · from ${new Date(DATA.valid[0]).toUTCString().replace(':00 GMT', ' UTC')} · hourly, 15-day`;
-    draw();
-    onLoaded(loc);
-  } catch (e) {
-    document.getElementById('submeta').textContent = '';
-    setErr('Could not load forecast: ' + e.message);
-  }
-}
-
-// Observed weather for a past date range (ERA5 reanalysis — a single line, no ensemble).
-async function loadArchive(loc, from, to) {
-  setErr('');
-  document.getElementById('submeta').textContent = 'loading history…';
-  try {
-    const url = `${ARCHIVE}?latitude=${loc.lat}&longitude=${loc.lon}&start_date=${from}&end_date=${to}&hourly=${HOURLY}&wind_speed_unit=ms`;
-    const j = await fetchJSON(url, Infinity, `ar:${loc.lat.toFixed(2)},${loc.lon.toFixed(2)},${from},${to}`);  // history never changes
-    const h = j.hourly;
-    if (!h || !h.time || !h.time.length) throw new Error('no data for that range');
-    const vars = {};
-    for (const [key, base, label, unit] of VMAP) { if (base in h) vars[key] = { label, unit, members: [h[base]], hres: null }; }  // one observed series
-    DATA = {
-      location: { name: loc.name, lat: j.latitude, lon: j.longitude },
-      model: 'ERA5 reanalysis · observed',
-      steps: h.time.map((_, i) => i), valid: h.time.map(t => t + ':00Z'), vars, nowIndex: 0,
-    };
-    document.getElementById('title').textContent = `Weather history — ${loc.name}`;
-    document.getElementById('submeta').innerHTML =
-      `<b>ERA5 reanalysis — observed</b> · ${j.latitude.toFixed(2)}°, ${j.longitude.toFixed(2)}° · ${from} → ${to}`;
-    draw(); onLoaded(loc);
-  } catch (e) {
-    document.getElementById('submeta').textContent = '';
-    setErr('Could not load history: ' + e.message);
-  }
-}
-
-// favourites + last-viewed persistence (localStorage)
-const LS_FAV = 'meteogram.favs', LS_LAST = 'meteogram.last';
-const getFavs = () => { try { return JSON.parse(localStorage.getItem(LS_FAV)) || []; } catch { return []; } };
-const setFavs = f => localStorage.setItem(LS_FAV, JSON.stringify(f));
-const sameLoc = (a, b) => !!a && !!b && Math.abs(a.lat - b.lat) < 0.02 && Math.abs(a.lon - b.lon) < 0.02;
-const favBtn = document.getElementById('fav'), qEl = document.getElementById('q');
-let current = [], recent = [], loaded = null;
-
-function rebuild() {
-  sel.innerHTML = ''; current = [];
-  const favs = getFavs(), favList = favs.length ? favs : LOCS;
-  const grp = (label, items) => {
-    items = items.filter(Boolean); if (!items.length) return;
-    const og = document.createElement('optgroup'); og.label = label;
-    for (const it of items) {
-      const i = current.length; current.push(it);
-      const o = document.createElement('option'); o.value = i; o.textContent = it.name; og.appendChild(o);
-    }
-    sel.appendChild(og);
-  };
-  grp(favs.length ? '★ Favourites' : 'Default', favList);
-  grp('Recent', recent.filter(r => !favList.some(f => sameLoc(f, r))));
-  if (loaded) { const i = current.findIndex(c => sameLoc(c, loaded)); if (i >= 0) sel.value = i; }
-}
-function updateFav() {
-  const isFav = loaded && getFavs().some(f => sameLoc(f, loaded));
-  favBtn.textContent = isFav ? '★ Saved' : '☆ Save';
-  favBtn.title = isFav ? 'Remove from favourites' : 'Save to favourites';
-}
-function onLoaded(loc) {                                   // called after a successful load()
-  loaded = { name: loc.name, lat: loc.lat, lon: loc.lon };
-  localStorage.setItem(LS_LAST, JSON.stringify(loaded));
-  if (!current.some(c => sameLoc(c, loaded))) { recent = [loaded, ...recent.filter(r => !sameLoc(r, loaded))].slice(0, 8); rebuild(); }
-  else { const i = current.findIndex(c => sameLoc(c, loaded)); if (i >= 0) sel.value = i; }
-  updateFav();
-}
-sel.addEventListener('change', () => { const l = current[sel.value]; if (l) load(l); });
-favBtn.addEventListener('click', () => {
-  if (!loaded) return;
-  const favs = getFavs(), i = favs.findIndex(f => sameLoc(f, loaded));
-  if (i >= 0) favs.splice(i, 1); else favs.push(loaded);
-  setFavs(favs); rebuild(); updateFav();
-});
-async function search() {
-  const q = qEl.value.trim(); if (!q) return;
-  setErr('');
-  try {
-    const gj = await fetchJSON(`${GEO}?name=${encodeURIComponent(q)}&count=8&language=en&format=json`, Infinity, `geo:${q.toLowerCase()}`);
-    const res = (gj.results || []).map(x => ({ name: [x.name, x.admin1, x.country].filter(Boolean).join(', '), lat: x.latitude, lon: x.longitude }));
-    if (!res.length) { setErr(`No place found for “${q}”.`); return; }
-    recent = [...res, ...recent].slice(0, 12); rebuild(); load(res[0]);   // matches go in the dropdown to disambiguate
-  } catch (e) { setErr('Search failed: ' + e.message); }
-}
-document.getElementById('go').addEventListener('click', search);
-qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
-// history date range: defaults to the past week, max ~2 days ago (ERA5 latency), 1940 floor
-const fromEl = document.getElementById('from'), toEl = document.getElementById('to');
-const iso = d => d.toISOString().slice(0, 10);
-const maxArchive = new Date(Date.now() - 2 * 86400000);
-fromEl.max = toEl.max = iso(maxArchive); fromEl.min = toEl.min = '1940-01-01';
-toEl.value = iso(maxArchive);
-fromEl.value = iso(new Date(maxArchive.getTime() - 6 * 86400000));
-document.getElementById('view').addEventListener('click', () => {
-  const f = fromEl.value, t = toEl.value;
-  if (!loaded) return;
-  if (!f || !t) { setErr('Pick a From and To date.'); return; }
-  if (f > t) { setErr('From date is after To date.'); return; }
-  loadArchive(loaded, f, t);
-});
-document.getElementById('fc').addEventListener('click', () => { if (loaded) load(loaded); });
-window.addEventListener('resize', draw);
-
-rebuild();
-let lastSeen = null; try { lastSeen = JSON.parse(localStorage.getItem(LS_LAST)); } catch {}
-load(lastSeen || LOCS[0]);                                // reopen on last-viewed location
-</script>
+  <footer>
+    <p>Forecast data from <a href="https://open-meteo.com/en/docs/ensemble-api" target="_blank" rel="noopener">Open-Meteo Ensemble API</a>, derived from the selected forecasting centres. ECMWF data is available under CC-BY-4.0. Historical values are ERA5 reanalysis: a model-assisted reconstruction, not direct observations.</p>
+    <p>Native model output may be interpolated by Open-Meteo to hourly intervals. Guidance only—use official warnings and forecasts for safety-critical decisions.</p>
+  </footer>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
