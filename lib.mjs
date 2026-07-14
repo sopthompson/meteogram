@@ -1,20 +1,20 @@
 export const MODEL_DEFS = [
-  { id:'ecmwf_ifs025', name:'ECMWF IFS', short:'IFS', members:51, horizon:360, color:'#ff7b6b' },
-  { id:'ecmwf_aifs025', name:'ECMWF AIFS', short:'AIFS', members:51, horizon:360, color:'#d6a6ff' },
-  { id:'gfs025', name:'NOAA GEFS', short:'GEFS', members:31, horizon:240, color:'#5ec8e8' },
-  { id:'icon_seamless', name:'DWD ICON EPS', short:'ICON', members:40, horizon:180, color:'#9bdc8b' },
-  { id:'gem_global', name:'CMC GEPS', short:'GEPS', members:21, horizon:384, color:'#ffd166' },
+  { id:'ecmwf_ifs025', name:'ECMWF IFS', short:'IFS', members:51, horizon:360, color:'#c43b48' },
+  { id:'ecmwf_aifs025', name:'ECMWF AIFS', short:'AIFS', members:51, horizon:360, color:'#76519a' },
+  { id:'gfs025', name:'NOAA GEFS', short:'GEFS', members:31, horizon:240, color:'#007c91' },
+  { id:'icon_seamless', name:'DWD ICON EPS', short:'ICON', members:40, horizon:180, color:'#2e7d4f' },
+  { id:'gem_global', name:'CMC GEPS', short:'GEPS', members:21, horizon:384, color:'#b86f00' },
 ];
 
 export const VARIABLE_DEFS = [
-  { key:'t2m', api:'temperature_2m', title:'2 m temperature', type:'temperature', color:'#ff7b6b', h:132 },
-  { key:'precip', api:'precipitation', title:'Hourly precipitation', type:'precipitation', color:'#5ec8e8', zero:true, h:112 },
-  { key:'wind', api:'wind_speed_10m', title:'10 m wind & gusts', type:'wind', color:'#9bdc8b', zero:true, gust:'gust', h:116 },
-  { key:'direction', api:'wind_direction_10m', title:'Wind direction', type:'direction', color:'#82d5b2', fixed:[0,360], h:90 },
-  { key:'cloud', api:'cloud_cover', title:'Cloud cover', type:'percent', color:'#c9d3e6', fixed:[0,100], h:88 },
-  { key:'mslp', api:'pressure_msl', title:'Mean sea-level pressure', type:'pressure', color:'#d6a6ff', h:100 },
-  { key:'snow', api:'snowfall', title:'Snowfall', type:'snowfall', color:'#c8e9ff', zero:true, h:90 },
-  { key:'freezing', api:'freezing_level_height', title:'Freezing level', type:'height', color:'#74b9ff', zero:true, h:100 },
+  { key:'t2m', api:'temperature_2m', title:'2 m temperature', type:'temperature', color:'#c43b48', h:132 },
+  { key:'precip', api:'precipitation', title:'Hourly precipitation', type:'precipitation', color:'#007caa', zero:true, h:112 },
+  { key:'wind', api:'wind_speed_10m', title:'10 m wind & gusts', type:'wind', color:'#2e7d4f', zero:true, gust:'gust', h:116 },
+  { key:'direction', api:'wind_direction_10m', title:'Wind direction', type:'direction', color:'#227c72', fixed:[0,360], h:90 },
+  { key:'cloud', api:'cloud_cover', title:'Cloud cover', type:'percent', color:'#607d8b', fixed:[0,100], h:88 },
+  { key:'mslp', api:'pressure_msl', title:'Mean sea-level pressure', type:'pressure', color:'#76519a', h:100 },
+  { key:'snow', api:'snowfall', title:'Snowfall', type:'snowfall', color:'#4386a8', zero:true, h:90 },
+  { key:'freezing', api:'freezing_level_height', title:'Freezing level', type:'height', color:'#306fa3', zero:true, h:100 },
 ];
 
 export const API_VARIABLES = [...VARIABLE_DEFS.map(v=>v.api),'wind_gusts_10m'].join(',');
