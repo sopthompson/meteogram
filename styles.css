@@ -29,6 +29,7 @@ fieldset { min-width:0; margin:0; padding:9px 10px 11px; background:#f8fafb; bor
 legend { padding:0 5px; color:#29485d; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
 .checks { display:flex; flex-wrap:wrap; gap:7px 12px; }.checks label { display:flex; align-items:center; gap:5px; color:var(--text); font-weight:400; white-space:nowrap; }.checks input { min-height:auto; margin:0; accent-color:var(--blue); }
 .primary-model { display:flex; align-items:center; gap:7px; margin-top:9px; }.primary-model select { margin:0; min-height:31px; padding:3px 7px; }
+.model-runs { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px; margin-top:9px; padding-top:8px; border-top:1px solid #d4dde3; }.model-run select { width:100%; min-height:30px; font-size:11px; }
 .field-help { display:block; max-width:360px; margin-top:5px; color:#657b89; font-size:10px; line-height:1.35; }.box-layout { display:block; margin-top:9px; }.box-layout select { width:100%; }
 .model-dot { width:9px; height:9px; border:1px solid rgba(0,0,0,.2); border-radius:50%; display:inline-block; }
 .segmented { display:flex; }.segmented button { flex:1; color:#17435e; background:#fff; border-color:#9fb1be; border-radius:0; white-space:nowrap; }.segmented button:hover { background:#e5f2f7; }.segmented button.active { color:#fff; background:var(--navy); border-color:var(--navy); }.segmented button:first-child { border-radius:3px 0 0 3px; }.segmented button:last-child { border-radius:0 3px 3px 0; }
