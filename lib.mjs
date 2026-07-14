@@ -9,6 +9,7 @@ export const MODEL_DEFS = [
 export const VARIABLE_DEFS = [
   { key:'t2m', api:'temperature_2m', title:'2 m temperature', type:'temperature', color:'#c43b48', h:132 },
   { key:'precip', api:'precipitation', title:'Hourly precipitation', type:'precipitation', color:'#007caa', zero:true, h:112 },
+  { key:'precipAccum', title:'Cumulative precipitation', type:'precipitation', color:'#005f73', zero:true, h:112 },
   { key:'wind', api:'wind_speed_10m', title:'10 m wind & gusts', type:'wind', color:'#2e7d4f', zero:true, gust:'gust', h:116 },
   { key:'direction', api:'wind_direction_10m', title:'Wind direction', type:'direction', color:'#227c72', fixed:[0,360], h:90 },
   { key:'cloud', api:'cloud_cover', title:'Cloud cover', type:'percent', color:'#607d8b', fixed:[0,100], h:88 },
@@ -17,7 +18,7 @@ export const VARIABLE_DEFS = [
   { key:'freezing', api:'freezing_level_height', title:'Freezing level', type:'height', color:'#306fa3', zero:true, h:100 },
 ];
 
-export const API_VARIABLES = [...VARIABLE_DEFS.map(v=>v.api),'wind_gusts_10m'].join(',');
+export const API_VARIABLES = [...VARIABLE_DEFS.map(v=>v.api).filter(Boolean),'wind_gusts_10m'].join(',');
 
 const COUNTRY_ALIASES={uk:'GB','united kingdom':'GB',gb:'GB',usa:'US','united states':'US',us:'US',canada:'CA',australia:'AU','new zealand':'NZ',ireland:'IE',france:'FR',germany:'DE',spain:'ES',italy:'IT',netherlands:'NL',belgium:'BE',switzerland:'CH'};
 export function parsePlaceQuery(query) {
@@ -60,13 +61,14 @@ export function parseUtc(value) {
 export function normalizeModel(json,def) {
   if (!json?.hourly?.time) throw new Error(`${def.name}: response has no hourly data`);
   const hourly=json.hourly,vars={};
-  for (const variable of VARIABLE_DEFS.concat({key:'gust',api:'wind_gusts_10m',type:'wind'})) {
+  for (const variable of VARIABLE_DEFS.filter(v=>v.api).concat({key:'gust',api:'wind_gusts_10m',type:'wind'})) {
     const members=Object.keys(hourly)
       .filter(k=>k.startsWith(`${variable.api}_member`))
       .sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))
       .map(k=>hourly[k]);
     if (members.length || hourly[variable.api]) vars[variable.key]={members,control:hourly[variable.api]||null};
   }
+  if(vars.precip){const accumulate=series=>{let total=0;return series.map(value=>Number.isFinite(value)?total+=value:null)};vars.precipAccum={members:vars.precip.members.map(accumulate),control:vars.precip.control?accumulate(vars.precip.control):null}}
   return { ...def, times:hourly.time.map(parseUtc), vars, latitude:json.latitude, longitude:json.longitude, elevation:json.elevation, timezone:json.timezone, fetchedAt:Date.now() };
 }
 
