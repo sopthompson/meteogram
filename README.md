@@ -6,18 +6,23 @@ A static, installable weather tool for exploring forecast uncertainty. It compar
 
 - ECMWF IFS and AIFS, NOAA GEFS, DWD ICON EPS and CMC GEPS
 - Fan charts with 10–90% and 25–75% ranges, ensemble median and control run
-- Comparative box–whisker charts (10–90% whiskers, interquartile box and median)
+- Comparative box–whisker charts (10–90% whiskers, interquartile box and median), shown at 3–12-hour intervals
+- Optional combined multi-model boxes with equal weighting per forecasting system
 - Temperature, precipitation, sustained wind and gusts, wind direction, cloud, pressure, snowfall and freezing level
 - Configurable rain probability thresholds
 - 48-hour, 7-day and 15-day views with synchronized pointer, touch and keyboard inspection
 - Daily ensemble summaries, model selection and explicit primary-model control
-- Place search, geolocation, favourites and recents
+- Disambiguated place search, geolocation, a clickable global map, favourites and recents
 - Metric, UK and US units; location-local or UTC display
 - Shareable URLs, member-level CSV export and PNG export
 - Explicit ERA5 reanalysis history mode
 - Accessible data table, responsive layout, offline shell and stale-data fallback
 
 Models retain their own ensemble distributions. Members from different forecasting centres are not pooled: fan mode shows the primary model distribution with peer medians, while box–whisker mode places the selected models alongside one another.
+
+Combined box mode is an explicit exception: it constructs an equal-model-weight mixture by sampling the same quantile grid from each available model. This prevents larger ensembles from dominating simply because they contain more members. It is useful consensus guidance, not a calibrated grand ensemble.
+
+The primary model supplies the fan distribution, daily cards, detailed tooltip and master time axis. Other selected models are comparison overlays in fan mode and peers in box mode.
 
 ## Run locally
 

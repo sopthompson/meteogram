@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { quantile,statsAt,circularMeanAt,parseUtc,normalizeModel,niceBounds,convert,unitFor,nearestIndex,dailySummary,formatValue } from '../lib.mjs';
+import { quantile,statsAt,circularMeanAt,equalWeightedStats,parsePlaceQuery,parseUtc,normalizeModel,niceBounds,convert,unitFor,nearestIndex,dailySummary,formatValue } from '../lib.mjs';
 
 test('quantiles interpolate and stats ignore missing values',()=>{
   assert.equal(quantile([0,10],.25),2.5);
@@ -26,6 +26,19 @@ test('wind direction uses circular rather than linear averaging',()=>{
   const mean=circularMeanAt([[350],[10]],0);
   assert.ok(mean<.001||mean>359.999);
   assert.equal(formatValue(225,'direction','metric'),'225° SW');
+});
+
+test('combined ensemble statistics weight models equally',()=>{
+  const large=Array.from({length:50},()=>[0]),small=[[10],[10]];
+  const stats=equalWeightedStats([large,small],0,.2,41);
+  assert.equal(stats.median,5);
+  assert.equal(stats.probability,50);
+});
+
+test('place searches recognise country qualifiers',()=>{
+  assert.deepEqual(parsePlaceQuery('Southport UK'),{name:'Southport',countryCode:'GB'});
+  assert.deepEqual(parsePlaceQuery('Paris, US'),{name:'Paris',countryCode:'US'});
+  assert.deepEqual(parsePlaceQuery('Southport'),{name:'Southport',countryCode:null});
 });
 
 test('produces stable nice bounds',()=>{
