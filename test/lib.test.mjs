@@ -16,6 +16,13 @@ test('normalizes dynamic member counts and control separately',()=>{
   assert.deepEqual(model.vars.t2m.control,[10]);
 });
 
+test('derives cumulative precipitation independently for every member',()=>{
+  const json={hourly:{time:['2026-07-13T00:00','2026-07-13T01:00','2026-07-13T02:00'],precipitation:[1,2,3],precipitation_member01:[0,1,4],precipitation_member02:[2,0,1]}};
+  const model=normalizeModel(json,{id:'test',name:'Test'});
+  assert.deepEqual(model.vars.precipAccum.control,[1,3,6]);
+  assert.deepEqual(model.vars.precipAccum.members,[[0,1,5],[2,2,3]]);
+});
+
 test('parses GMT API timestamps and finds nearest time',()=>{
   const times=['2026-01-01T00:00','2026-01-01T01:00','2026-01-01T02:00'].map(parseUtc);
   assert.equal(nearestIndex(times,Date.parse('2026-01-01T01:20Z')),1);
