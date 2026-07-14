@@ -76,7 +76,7 @@
       </div>
 
       <details class="more-controls">
-        <summary>Panels, seasonal, history and export</summary>
+        <summary>Panels, past runs, seasonal, history and export</summary>
         <div class="details-grid">
           <fieldset><legend>Panels</legend><div id="panels" class="checks"></div></fieldset>
           <fieldset class="history"><legend>Seasonal &amp; ERA5</legend>
@@ -85,6 +85,13 @@
             <label>To <input type="date" id="to"></label>
             <button id="history" type="button">View ERA5 history</button>
             <button id="forecast" type="button">Live forecast</button>
+          </fieldset>
+          <fieldset class="history"><legend>Past model runs</legend>
+            <label>Model <select id="run-model"></select></label>
+            <label>Initialization UTC <input type="datetime-local" id="run-time" step="21600"></label>
+            <label>Cycles <select id="run-cycles"><option value="2">2 · 12 hours</option><option value="4" selected>4 · 24 hours</option><option value="8">8 · 48 hours</option></select></label>
+            <button id="past-runs" type="button">Compare archived runs</button>
+            <small class="field-help">Use Individual members for run lines or Combined models for a lagged-run fan.</small>
           </fieldset>
           <fieldset><legend>Share &amp; export</legend>
             <div class="button-row"><button id="share" type="button">Copy link</button><button id="csv" type="button">CSV</button><button id="png" type="button">PNG</button></div>
