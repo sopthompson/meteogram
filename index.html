@@ -42,7 +42,7 @@
           <legend>Ensemble models</legend>
           <div id="models" class="checks"></div>
           <label class="primary-model">Primary model <select id="primary"></select></label>
-          <small class="field-help">Drives the fan spread, daily cards, tooltip detail and forecast time axis.</small>
+          <small class="field-help">Sets the forecast time axis, daily cards and detailed tooltip. Fan view shows every member from every selected model.</small>
         </fieldset>
         <fieldset>
           <legend>View</legend>
@@ -50,6 +50,7 @@
             <button class="active" type="button" data-view="fan" aria-pressed="true">Fan</button>
             <button type="button" data-view="box" aria-pressed="false">Box–whisker</button>
           </div>
+          <label class="box-layout">Fan style <select id="fan-mode"><option value="members">Individual members</option><option value="percentiles">Percentile bands</option></select></label>
           <label class="box-layout">Boxes <select id="box-mode"><option value="separate">Models side by side</option><option value="combined">Combined · equal weight</option></select></label>
         </fieldset>
         <fieldset>
@@ -75,13 +76,14 @@
       </div>
 
       <details class="more-controls">
-        <summary>Panels, history and export</summary>
+        <summary>Panels, seasonal, history and export</summary>
         <div class="details-grid">
           <fieldset><legend>Panels</legend><div id="panels" class="checks"></div></fieldset>
-          <fieldset class="history"><legend>ERA5 reanalysis history</legend>
+          <fieldset class="history"><legend>Seasonal &amp; ERA5</legend>
+            <button id="seasonal" type="button">7-month seasonal ensemble</button>
             <label>From <input type="date" id="from"></label>
             <label>To <input type="date" id="to"></label>
-            <button id="history" type="button">View history</button>
+            <button id="history" type="button">View ERA5 history</button>
             <button id="forecast" type="button">Live forecast</button>
           </fieldset>
           <fieldset><legend>Share &amp; export</legend>
