@@ -19,6 +19,13 @@ export const VARIABLE_DEFS = [
 
 export const API_VARIABLES = [...VARIABLE_DEFS.map(v=>v.api),'wind_gusts_10m'].join(',');
 
+const COUNTRY_ALIASES={uk:'GB','united kingdom':'GB',gb:'GB',usa:'US','united states':'US',us:'US',canada:'CA',australia:'AU','new zealand':'NZ',ireland:'IE',france:'FR',germany:'DE',spain:'ES',italy:'IT',netherlands:'NL',belgium:'BE',switzerland:'CH'};
+export function parsePlaceQuery(query) {
+  const clean=query.trim().replace(/\s+/g,' '),lower=clean.toLowerCase();
+  for(const alias of Object.keys(COUNTRY_ALIASES).sort((a,b)=>b.length-a.length))if(lower.endsWith(` ${alias}`)||lower.endsWith(`, ${alias}`)){const name=clean.slice(0,clean.length-alias.length).replace(/[\s,]+$/,'');if(name)return{name,countryCode:COUNTRY_ALIASES[alias]}}
+  const match=clean.match(/^(.*?)[,\s]+([A-Z]{2})$/);return match&&match[1]?{name:match[1].trim(),countryCode:match[2]}:{name:clean,countryCode:null};
+}
+
 export function quantile(sorted,q) {
   if (!sorted.length) return null;
   const p=(sorted.length-1)*q,b=Math.floor(p),r=p-b;
@@ -35,6 +42,15 @@ export function circularMeanAt(members,index) {
   const values=members.map(m=>m[index]).filter(Number.isFinite);if(!values.length)return null;
   const rad=Math.PI/180,sin=values.reduce((n,v)=>n+Math.sin(v*rad),0),cos=values.reduce((n,v)=>n+Math.cos(v*rad),0);
   return (Math.atan2(sin,cos)/rad+360)%360;
+}
+
+export function equalWeightedStats(memberSets,index,threshold=.2,sampleCount=41) {
+  const mixture=[];
+  for (const members of memberSets) {
+    const values=members.map(m=>m[index]).filter(Number.isFinite).sort((a,b)=>a-b);if(!values.length)continue;
+    for(let i=0;i<sampleCount;i++)mixture.push(quantile(values,(i+.5)/sampleCount));
+  }
+  return statsAt(mixture.map(value=>[value]),0,threshold);
 }
 
 export function parseUtc(value) {

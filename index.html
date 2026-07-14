@@ -8,6 +8,7 @@
   <title>Ensemble Meteogram</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -29,6 +30,7 @@
         </label>
         <button id="go" type="button">Search</button>
         <button id="near" type="button" title="Use your current location">◎ Near me</button>
+        <button id="open-map" type="button" title="Choose a point on a world map">⌖ Map</button>
         <label for="loc">Place
           <select id="loc"></select>
         </label>
@@ -40,6 +42,7 @@
           <legend>Ensemble models</legend>
           <div id="models" class="checks"></div>
           <label class="primary-model">Primary model <select id="primary"></select></label>
+          <small class="field-help">Drives the fan spread, daily cards, tooltip detail and forecast time axis.</small>
         </fieldset>
         <fieldset>
           <legend>View</legend>
@@ -47,6 +50,7 @@
             <button class="active" type="button" data-view="fan" aria-pressed="true">Fan</button>
             <button type="button" data-view="box" aria-pressed="false">Box–whisker</button>
           </div>
+          <label class="box-layout">Boxes <select id="box-mode"><option value="separate">Models side by side</option><option value="combined">Combined · equal weight</option></select></label>
         </fieldset>
         <fieldset>
           <legend>Range</legend>
@@ -106,10 +110,22 @@
     </details>
   </main>
 
+  <dialog id="search-dialog" class="picker-dialog" aria-labelledby="search-title">
+    <form method="dialog" class="dialog-head"><h2 id="search-title">Choose a matching place</h2><button aria-label="Close">×</button></form>
+    <div id="search-results" class="search-results"></div>
+  </dialog>
+
+  <dialog id="map-dialog" class="map-dialog" aria-labelledby="map-title">
+    <form method="dialog" class="dialog-head"><div><h2 id="map-title">Choose a location</h2><p>Pan, zoom, then click anywhere on the map.</p></div><button aria-label="Close">×</button></form>
+    <div id="world-map" aria-label="Interactive world map"></div>
+    <div class="map-choice"><span id="map-coordinates">Click the map to place a marker</span><button id="use-map-location" type="button" disabled>Use this location</button></div>
+  </dialog>
+
   <footer>
     <p>Forecast data from <a href="https://open-meteo.com/en/docs/ensemble-api" target="_blank" rel="noopener">Open-Meteo Ensemble API</a>, derived from the selected forecasting centres. ECMWF data is available under CC-BY-4.0. Historical values are ERA5 reanalysis: a model-assisted reconstruction, not direct observations.</p>
     <p>Native model output may be interpolated by Open-Meteo to hourly intervals. Guidance only—use official warnings and forecasts for safety-critical decisions.</p>
   </footer>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
