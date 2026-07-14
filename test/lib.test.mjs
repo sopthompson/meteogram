@@ -64,10 +64,11 @@ test('converts unit families correctly',()=>{
 
 test('daily summaries respect the selected slice',()=>{
   const times=['2026-07-13T00:00','2026-07-13T01:00','2026-07-14T00:00'].map(parseUtc);
-  const model={times,vars:{t2m:{members:[[1,2,9]]},precip:{members:[[0,1,2]]},wind:{members:[[2,3,4]]},gust:{members:[[4,5,6]]}}};
+  const model={times,vars:{t2m:{members:[[1,2,9]]},precip:{members:[[0,1,2]]},wind:{members:[[2,3,4]]},direction:{members:[[180,225,270]]},gust:{members:[[4,5,6]]}}};
   const result=dailySummary(model,1,3,.2,'UTC');
   assert.equal(result.length,2);
   assert.equal(result[0].min,2);
+  assert.equal(result[0].direction,225);
   assert.equal(result[1].max,9);
 });
 

@@ -117,15 +117,15 @@ export function nearestIndex(times,target) {
 }
 
 export function dailySummary(model,start=0,end=model.times.length,threshold=.2,timeZone='UTC') {
-  const days=new Map(),temp=model.vars.t2m,precip=model.vars.precip,wind=model.vars.wind,gust=model.vars.gust;
+  const days=new Map(),temp=model.vars.t2m,precip=model.vars.precip,wind=model.vars.wind,direction=model.vars.direction,gust=model.vars.gust;
   model.times.slice(start,end).forEach((date,offset)=>{
     const i=start+offset;
     const key=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
-    if (!days.has(key)) days.set(key,{date,temps:[],wind:[],gust:[],wet:[],indices:[]});
-    const d=days.get(key),ts=temp?statsAt(temp.members,i):null,ps=precip?statsAt(precip.members,i,threshold):null,ws=wind?statsAt(wind.members,i):null,gs=gust?statsAt(gust.members,i):null;
-    d.indices.push(i); if (ts) d.temps.push(ts.median); if (ps) d.wet.push(ps.probability); if (ws)d.wind.push(ws.median); if(gs)d.gust.push(gs.median);
+    if (!days.has(key)) days.set(key,{date,temps:[],wind:[],direction:[],gust:[],wet:[],indices:[]});
+    const d=days.get(key),ts=temp?statsAt(temp.members,i):null,ps=precip?statsAt(precip.members,i,threshold):null,ws=wind?statsAt(wind.members,i):null,ds=direction?circularMeanAt(direction.members,i):null,gs=gust?statsAt(gust.members,i):null;
+    d.indices.push(i); if (ts) d.temps.push(ts.median); if (ps) d.wet.push(ps.probability); if (ws){d.wind.push(ws.median);d.direction.push(ds)} if(gs)d.gust.push(gs.median);
   });
-  return [...days.values()].map(d=>{const totals=precip?.members.map(member=>d.indices.reduce((sum,i)=>sum+(Number.isFinite(member[i])?member[i]:0),0))||[],rain=totals.length?statsAt(totals.map(v=>[v]),0)?.median:null;return{date:d.date,min:d.temps.length?Math.min(...d.temps):null,max:d.temps.length?Math.max(...d.temps):null,rain,wet:d.wet.length?Math.max(...d.wet):null,wind:d.wind.length?Math.max(...d.wind):null,gust:d.gust.length?Math.max(...d.gust):null}});
+  return [...days.values()].map(d=>{const totals=precip?.members.map(member=>d.indices.reduce((sum,i)=>sum+(Number.isFinite(member[i])?member[i]:0),0))||[],rain=totals.length?statsAt(totals.map(v=>[v]),0)?.median:null,wind=d.wind.length?Math.max(...d.wind):null,windIndex=d.wind.indexOf(wind);return{date:d.date,min:d.temps.length?Math.min(...d.temps):null,max:d.temps.length?Math.max(...d.temps):null,rain,wet:d.wet.length?Math.max(...d.wet):null,wind,direction:windIndex>=0?d.direction[windIndex]:null,gust:d.gust.length?Math.max(...d.gust):null}});
 }
 
 export function solarElevation(date,lat,lon) {
